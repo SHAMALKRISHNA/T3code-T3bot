@@ -23,6 +23,7 @@ export function LabsSettingsPanel() {
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
         <PromptSuggestionsRow />
+        <PlanModeRow />
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
       </SettingsSection>
@@ -257,6 +258,24 @@ function FastWorktreeCheckoutRow() {
           checked={settings.fastWorktreeCheckout}
           onCheckedChange={(checked) => updateSettings({ fastWorktreeCheckout: Boolean(checked) })}
           aria-label="Fast worktree checkout"
+        />
+      }
+    />
+  );
+}
+
+function PlanModeRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("plan-mode")}
+      description="Enable Build/Plan, /plan, /default, and Shift+Tab for providers that support Plan mode."
+      control={
+        <Switch
+          checked={settings.planModeEnabled}
+          onCheckedChange={(checked) => updateSettings({ planModeEnabled: Boolean(checked) })}
+          aria-label="Plan mode"
         />
       }
     />
