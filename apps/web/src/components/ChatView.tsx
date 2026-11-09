@@ -19,6 +19,7 @@ import {
 import { usePullRequestDraftThread } from "./chat/usePullRequestDraftThread";
 import { usePullRequestLinking } from "../hooks/usePullRequestLinking";
 import { useComposerSelection } from "./chat/useComposerSelection";
+import { resolveCompatibleRuntimeMode } from "./chat/runtimeModeConfig";
 import { useProjectCloneBanner } from "./chat/useProjectCloneBanner";
 import { useAttachmentPreviewHandoff } from "./chat/useAttachmentPreviewHandoff";
 import {
@@ -2879,6 +2880,7 @@ export default function ChatView(props: ChatViewProps) {
 
   const {
     getModelDisabledReason,
+    persistInteractionMode,
     handleInteractionModeChange,
     handleInteractionModeChangeStable,
     handleRuntimeModeChangeStable,
@@ -2941,7 +2943,10 @@ export default function ChatView(props: ChatViewProps) {
     resetLocalDispatch,
     activeProject,
     activeEnvironmentUnavailable,
-    defaultRuntimeMode,
+    runtimeMode: resolveCompatibleRuntimeMode(
+      runtimeMode,
+      activeProviderStatus?.supportedRuntimeModes,
+    ).mode,
   });
   const { onSend } = useComposerSend({
     environmentId,
@@ -3014,6 +3019,7 @@ export default function ChatView(props: ChatViewProps) {
     setKeepFullHistory,
     anchorNewTurn,
     acknowledgeActiveThreadWoke,
+    persistInteractionMode,
     handleInteractionModeChange,
     onSideChat: sideChat.available ? sendSideChatStable : undefined,
     sideChatDisabledReason,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   detectComposerTrigger,
+  isInteractionModeCommandName,
   parseSideChatCommand,
   parseInteractionModeCommand,
   serializeComposerFileLink,
@@ -126,5 +127,17 @@ describe("parseInteractionModeCommand", () => {
     expect(parseInteractionModeCommand(text!)).toEqual(
       mode ? { interactionMode: mode, prompt } : null,
     );
+  });
+});
+
+describe("isInteractionModeCommandName", () => {
+  it.each([
+    ["plan", true],
+    ["DEFAULT", true],
+    ["planner", false],
+    ["plan with arguments", false],
+    ["review", false],
+  ])("matches what the send path would consume for %j", (name, expected) => {
+    expect(isInteractionModeCommandName(name!)).toBe(expected);
   });
 });

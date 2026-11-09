@@ -102,13 +102,16 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   };
   const handleRuntimeModeChangeStable = useStableCallback(handleRuntimeModeChange);
 
-  const handleInteractionModeChange = (mode: ProviderInteractionMode) => {
-    if (mode === "plan" && !interactionModeEnabled) return;
-    if (mode === interactionMode) return;
+  const persistInteractionMode = (mode: ProviderInteractionMode) => {
     setComposerDraftInteractionMode(composerDraftTarget, mode);
     if (isLocalDraftThread) {
       setDraftThreadContext(composerDraftTarget, { interactionMode: mode });
     }
+  };
+  const handleInteractionModeChange = (mode: ProviderInteractionMode) => {
+    if (mode === "plan" && !interactionModeEnabled) return;
+    if (mode === interactionMode) return;
+    persistInteractionMode(mode);
     scheduleComposerFocus();
   };
   const handleInteractionModeChangeStable = useStableCallback(handleInteractionModeChange);
@@ -258,6 +261,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   };
   return {
     getModelDisabledReason,
+    persistInteractionMode,
     handleInteractionModeChange,
     handleInteractionModeChangeStable,
     handleRuntimeModeChangeStable,

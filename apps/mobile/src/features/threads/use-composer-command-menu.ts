@@ -32,6 +32,7 @@ import {
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
   detectComposerTrigger,
+  isInteractionModeCommandName,
   replaceTextRange,
   serializeComposerFileLink,
   type ComposerTrigger,
@@ -172,6 +173,8 @@ export function buildComposerSlashCommandItems(input: {
   for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
     if (!command.name.toLowerCase().includes(query)) continue;
     if (command.name === "clear" && input.offersFreshSession) continue;
+    // The send path would consume this text as T3's mode command.
+    if (allowInteractionMode && isInteractionModeCommandName(command.name)) continue;
     if (command.name === "compact" && !input.hasCompactableConversation) continue;
     if (command.name === USAGE_LIMITS_COMMAND.name && input.offersUsageLimits && !input.hasThread) {
       continue;

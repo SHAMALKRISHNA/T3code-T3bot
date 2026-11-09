@@ -353,6 +353,8 @@ export interface ChatComposerHandle {
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
     interactionMode: ProviderInteractionMode;
     interactionModeEnabled: boolean;
+    /** The empty composer's primary action is Resume, not implementing a proposed plan. */
+    resumeOwnsPrimaryAction: boolean;
     shownPendingApprovalIds: ReadonlyArray<RuntimeRequestId>;
   };
   validateProviderInput: (providerInput: string) => boolean;
@@ -976,6 +978,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     provider: selectedProviderStatus,
     interactionMode: requestedInteractionMode,
   });
+  // Text typed for a shown approval or question is that reply, so no menu pick may replace it.
+  const interactionModeCommandsOffered =
+    planModeUiEnabled && pendingUserInputs.length === 0 && activePendingApproval === null;
   const selectedModelSelection: ModelSelection = createModelSelection(
     selectedInstanceId,
     selectedModel,
@@ -1148,7 +1153,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pullRequestProjectId,
     pullRequestRepository,
     threadPullRequests,
-    planModeUiEnabled,
+    interactionModeCommandsOffered,
     sideChatAvailable: props.sideChatAvailable === true,
     sideChatDisabledReason: props.sideChatDisabledReason ?? null,
     freshSessionAvailable: props.onFreshSession !== undefined,
@@ -1965,7 +1970,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (applied) setComposerHighlightedItemId(null);
         return;
       }
-      if (!planModeUiEnabled) return;
+      if (!interactionModeCommandsOffered) return;
       void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
       const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
         expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -2144,7 +2149,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (activePendingProgress) {
       return activePendingProgress.isLastQuestion && Boolean(activePendingResolvedAnswers);
     }
-    return showPlanFollowUpPrompt || composerSendState.hasSendableContent;
+    return (showPlanFollowUpPrompt && !showResumeAction) || composerSendState.hasSendableContent;
   };
 
   const submitComposerRef = useRef<
@@ -3211,6 +3216,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedProviderModels,
         interactionMode,
         interactionModeEnabled: planModeUiEnabled,
+        resumeOwnsPrimaryAction: showResumeAction,
       }),
       setMultipleModelSelections,
       validateProviderInput: (providerInput: string) => {
@@ -3276,6 +3282,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedProviderModels,
       interactionMode,
       planModeUiEnabled,
+      showResumeAction,
       compactThreadContextStable,
     ],
   );
@@ -3628,7 +3635,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               ? "Type your answer"
                               : "Type your own answer, or leave this blank to use the selected option"
                           : showPlanFollowUpPrompt && activeProposedPlan
-                            ? "Add feedback to refine the plan, or leave this blank to implement it"
+                            ? showResumeAction
+                              ? "Add feedback to refine the plan"
+                              : "Add feedback to refine the plan, or leave this blank to implement it"
                             : projectSelectionRequired
                               ? "Choose a project above to start a thread"
                               : showProviderUnavailable

@@ -192,3 +192,8 @@ export function parseInteractionModeCommand(text: string): {
     prompt: match[2]?.trim() ?? "",
   };
 }
+
+/** Whether a slash command of this name would be consumed as T3's `/plan` or `/default`. */
+export function isInteractionModeCommandName(name: string): boolean {
+  return parseInteractionModeCommand(`/${name}`)?.prompt === "";
+}

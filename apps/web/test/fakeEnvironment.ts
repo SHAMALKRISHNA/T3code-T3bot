@@ -22,14 +22,22 @@ import {
   type ModelSelection,
   type OrchestrationProjectShell,
   type OrchestrationV2Command,
+  OrchestrationV2DispatchCommandError,
+  OrchestrationV2ThreadLaunchError,
+  type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
+  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ShellStreamItem,
+  type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadStreamItem,
   type OrchestrationV2TurnItem,
+  type ProviderInteractionMode,
+  type RuntimeMode,
+  type ServerProviderSlashCommand,
   type TerminalMetadataStreamEvent,
 } from "@t3tools/contracts";
 import type {
@@ -227,6 +235,10 @@ export interface FakeThread {
   readonly providerThreads?: ReadonlyArray<OrchestrationV2ProviderThread>;
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly runtimeMode?: RuntimeMode;
+  readonly interactionMode?: ProviderInteractionMode;
+  readonly plans?: ReadonlyArray<OrchestrationV2PlanArtifact>;
+  readonly runtimeRequests?: ReadonlyArray<OrchestrationV2RuntimeRequest>;
 }
 
 /** A thread of `turns` user prompts, each answered in markdown with a list and inline code. */
@@ -265,8 +277,8 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     title: thread.title,
     providerInstanceId: modelSelection.instanceId,
     modelSelection,
-    runtimeMode: "full-access",
-    interactionMode: "default",
+    runtimeMode: thread.runtimeMode ?? "full-access",
+    interactionMode: thread.interactionMode ?? "default",
     branch: "main",
     worktreePath: null,
     activeProviderThreadId: thread.providerThreads?.[0]?.id ?? null,
@@ -286,7 +298,7 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     pendingRuntimeRequest: null,
     latestVisibleMessage: null,
     latestUserMessageAt: AT,
-    hasActionableProposedPlan: false,
+    hasActionableProposedPlan: thread.plans?.some((plan) => plan.status === "active") ?? false,
     itemCount: thread.items.length,
     visibleItemCount: thread.items.length,
     createdAt: AT,
@@ -341,9 +353,9 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
     providerSessions: [],
     providerThreads: [...(thread.providerThreads ?? [])],
     providerTurns: [],
-    runtimeRequests: [],
+    runtimeRequests: [...(thread.runtimeRequests ?? [])],
     messages: [],
-    plans: [],
+    plans: [...(thread.plans ?? [])],
     turnItems: [...thread.items],
     checkpointScopes: [],
     checkpoints: [],
@@ -368,6 +380,8 @@ let pendingDispatches: Array<{
   readonly command: OrchestrationV2Command;
   readonly reply: Deferred.Deferred<never, OrchestrationV2DispatchCommandError>;
 }> = [];
+let rejectCommand: ((command: OrchestrationV2Command) => boolean) | null = null;
+let rejectLaunches = false;
 let sequence = 1;
 let vcsStatusSubscriber: Queue.Queue<VcsStatusStreamEvent> | null = null;
 
@@ -390,12 +404,34 @@ const handlers: Record<string, (input: never) => unknown> = {
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
     Effect.suspend(() => {
       dispatched.push(command);
+      if (rejectCommand?.(command)) {
+        return Effect.fail(
+          new OrchestrationV2DispatchCommandError({
+            commandId: command.commandId,
+            commandType: command.type,
+            message: "Rejected by the test",
+          }),
+        );
+      }
       if (acceptCommands && !holdCommand(command))
         return Effect.succeed({ sequence: sequence + 1 });
       const reply = Deferred.makeUnsafe<never, OrchestrationV2DispatchCommandError>();
       pendingDispatches.push({ command, reply });
       return Deferred.await(reply);
     }),
+  // A draft's first send. Pending unless the scenario fails it, like a server still launching.
+  [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input: OrchestrationV2ThreadLaunchInput) =>
+    Effect.suspend(() =>
+      rejectLaunches
+        ? Effect.fail(
+            new OrchestrationV2ThreadLaunchError({
+              commandId: input.commandId,
+              projectId: input.projectId,
+              message: "Rejected by the test",
+            }),
+          )
+        : Effect.never,
+    ),
   [WS_METHODS.subscribeTerminalMetadata]: () =>
     subscribe<TerminalMetadataStreamEvent>([{ type: "snapshot", terminals: [] }], (queue) => {
       terminalMetadataSubscriber = queue;
@@ -511,6 +547,10 @@ export function installFakeEnvironment(
     /** Commands left unanswered even when accepting, until `rejectPendingCommand`. */
     readonly holdCommand?: (command: OrchestrationV2Command) => boolean;
     readonly providers?: ReadonlyArray<unknown>;
+    /** Slash commands the provider advertises, beside T3's own. */
+    readonly providerSlashCommands?: ReadonlyArray<ServerProviderSlashCommand>;
+    /** Lets a draft start multiple models, each in its own worktree. */
+    readonly requiredWorktreeBootstrap?: boolean;
   },
 ): Disposable {
   threads = fixtures;
@@ -518,6 +558,23 @@ export function installFakeEnvironment(
   dispatched = [];
   acceptCommands = options?.acceptCommands === true;
   holdCommand = options?.holdCommand ?? (() => false);
+  rejectCommand = null;
+  rejectLaunches = false;
+  // Plan mode tests: provider slash commands and the multi-model worktree capability.
+  baseServerConfig = {
+    ...baseServerConfig,
+    environment: {
+      ...baseServerConfig.environment,
+      capabilities: {
+        ...baseServerConfig.environment.capabilities,
+        ...(options?.requiredWorktreeBootstrap ? { requiredWorktreeBootstrap: true } : {}),
+      },
+    },
+    providers: baseServerConfig.providers.map((provider) => ({
+      ...provider,
+      slashCommands: options?.providerSlashCommands ?? provider.slashCommands,
+    })),
+  };
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if (url.origin !== window.location.origin) return realFetch(input, init);
@@ -544,6 +601,8 @@ export function installFakeEnvironment(
       acceptCommands = false;
       holdCommand = () => false;
       pendingDispatches = [];
+      rejectCommand = null;
+      rejectLaunches = false;
     },
   };
 }
@@ -567,6 +626,26 @@ export async function rejectPendingCommand(message: string): Promise<void> {
 /** Commands the app dispatched to the environment, oldest first. */
 export function dispatchedCommands(): ReadonlyArray<OrchestrationV2Command> {
   return dispatched;
+}
+
+/** Fails the commands this matches, as the server would, until disposed. */
+export function rejectCommands(match: (command: OrchestrationV2Command) => boolean): Disposable {
+  rejectCommand = match;
+  return {
+    [Symbol.dispose]: () => {
+      rejectCommand = null;
+    },
+  };
+}
+
+/** Fails a draft's first send, as the server would, until disposed. */
+export function rejectThreadLaunches(): Disposable {
+  rejectLaunches = true;
+  return {
+    [Symbol.dispose]: () => {
+      rejectLaunches = false;
+    },
+  };
 }
 
 type ThreadEvent = Extract<OrchestrationV2ThreadStreamItem, { readonly kind: "event" }>["event"];

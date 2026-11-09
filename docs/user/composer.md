@@ -292,8 +292,9 @@ client preference; it does not change the thread's permission level.
 
 For providers that support the control, send `/plan` to select Plan mode or
 `/plan inspect the current implementation` to plan that task. `/default` returns to
-Build mode. These commands are case-insensitive and a typed command must start the
-message. An answer to a pending agent question remains literal answer text.
+Build mode. Either way, the thread stays in that mode for later messages. These
+commands are case-insensitive and a typed command must start the message. An answer
+to a pending agent question or approval remains literal text.
 Providers with their own native planning command retain that command instead.
 
 Send `/compact` in an existing conversation to reduce context usage when the

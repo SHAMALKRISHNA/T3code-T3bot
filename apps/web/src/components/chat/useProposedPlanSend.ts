@@ -236,7 +236,8 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
 interface ImplementPlanInNewThreadInput extends PlanSendBase {
   readonly activeProject: EnvironmentProject | null;
   readonly activeEnvironmentUnavailable: boolean;
-  readonly defaultRuntimeMode: RuntimeMode;
+  /** The approvals the plan was reviewed under, which the new thread keeps. */
+  readonly runtimeMode: RuntimeMode;
 }
 
 /**
@@ -257,7 +258,7 @@ export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput
     resetLocalDispatch,
     activeProject,
     activeEnvironmentUnavailable,
-    defaultRuntimeMode,
+    runtimeMode,
   } = input;
   const navigate = useNavigate();
   const createThread = useOrchestrationCommand(threadEnvironment.create, { reportFailure: false });
@@ -309,7 +310,7 @@ export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput
         projectId: activeProject.id,
         title: nextThreadTitle,
         modelSelection: nextThreadModelSelection,
-        runtimeMode: defaultRuntimeMode,
+        runtimeMode,
         interactionMode: "default",
         branch: activeThreadBranch,
         worktreePath: activeThread.worktreePath,
@@ -332,7 +333,7 @@ export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput
           },
           modelSelection: nextThreadModelSelection,
           titleSeed: nextThreadTitle,
-          runtimeMode: defaultRuntimeMode,
+          runtimeMode,
           interactionMode: "default",
           sourceProposedPlan: {
             threadId: activeThread.id,

@@ -94,7 +94,7 @@ vi.mock("./queued-run-edit", () => ({
 }));
 vi.mock("./preferences", async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
-  return { mobilePreferencesAtom: Atom.make(AsyncResult.success({})) };
+  return { mobilePreferencesAtom: Atom.make(AsyncResult.success({})).pipe(Atom.keepAlive) };
 });
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 vi.mock("@effect/atom-react", async () => {
@@ -193,10 +193,16 @@ vi.mock("../lib/copyTextWithHaptic", () => ({ copyTextWithHaptic: vi.fn() }));
 vi.mock("./use-remote-environment-registry", () => ({ setPendingConnectionError: vi.fn() }));
 
 import { Alert } from "react-native";
+import { appAtomRegistry } from "./atom-registry";
+import { mobilePreferencesAtom } from "./preferences";
 import { useThreadComposerState } from "./use-thread-composer-state";
 import { useSelectedThreadRequests } from "./use-selected-thread-requests";
 
 const NO_SIDE_CHATS = { startSideChat: async () => false };
+
+function setPreferences(result: AsyncResult.AsyncResult<{ planModeEnabled?: boolean }, never>) {
+  appAtomRegistry.set(mobilePreferencesAtom as unknown as Atom.Writable<typeof result>, result);
+}
 
 beforeEach(() => {
   state.grantedEnvironments = new Set(["primary"]);
@@ -211,6 +217,8 @@ beforeEach(() => {
   state.compactModel = null;
   state.compactDueAt = "";
   state.thread.latestRun = null;
+  state.thread.interactionMode = "default";
+  setPreferences(AsyncResult.success({}));
   state.projection = null;
   state.serverConfig = {
     providers: [{ instanceId: "codex", driver: "codex", enabled: true }],
@@ -277,8 +285,10 @@ describe("mobile task permissions", () => {
     expect(state.enqueue).not.toHaveBeenCalled();
     expect(state.clearDraft).not.toHaveBeenCalled();
     composer.onChangeDraftMessage("Edited locally");
-    composer.onUpdateInteractionMode("plan");
     expect(state.draft.text).toBe("Edited locally");
+    setPreferences(AsyncResult.success({ planModeEnabled: true }));
+    state.pendingRequests = { approvals: [], userInputs: [] };
+    useThreadComposerState(NO_SIDE_CHATS).onUpdateInteractionMode?.("plan");
     expect(state.updateSettings).toHaveBeenCalledWith("secondary:thread", {
       interactionMode: "plan",
     });
@@ -507,6 +517,76 @@ describe("mobile task permissions", () => {
       environmentId: "secondary",
       input: { threadId: "thread", requestId: "input", answers: { language: "TypeScript" } },
     });
+  });
+});
+
+describe("mobile Plan mode opt-in", () => {
+  it("runs a plan-mode thread in default while Plan mode is off on this device", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.thread.interactionMode = "plan";
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    expect(composer.interactionMode).toBe("default");
+    expect(await composer.onSendMessage()).toBe("message");
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ interactionMode: "default" }),
+    );
+  });
+
+  it("ignores a draft left in plan mode while Plan mode is off on this device", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.draft = { ...state.draft, interactionMode: "plan" } as typeof state.draft;
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    expect(composer.interactionMode).toBe("default");
+    await composer.onSendMessage();
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ interactionMode: "default" }),
+    );
+  });
+
+  it("runs in default until the preference has loaded", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.thread.interactionMode = "plan";
+    setPreferences(AsyncResult.initial());
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    expect(composer.interactionMode).toBe("default");
+    expect(composer.onUpdateInteractionMode).toBeUndefined();
+    await composer.onSendMessage();
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ interactionMode: "default" }),
+    );
+  });
+
+  it("keeps a plan-mode thread in plan once Plan mode is on", async () => {
+    state.grantedEnvironments.add("secondary");
+    state.thread.interactionMode = "plan";
+    setPreferences(AsyncResult.success({ planModeEnabled: true }));
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    expect(composer.interactionMode).toBe("plan");
+    await composer.onSendMessage();
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ interactionMode: "plan" }),
+    );
+  });
+
+  it("offers mode changes only when opted in with no approval waiting on a reply", () => {
+    state.pendingRequests = { approvals: [], userInputs: [] };
+    expect(useThreadComposerState(NO_SIDE_CHATS).onUpdateInteractionMode).toBeUndefined();
+
+    setPreferences(AsyncResult.success({ planModeEnabled: true }));
+    expect(useThreadComposerState(NO_SIDE_CHATS).onUpdateInteractionMode).toBeTypeOf("function");
+
+    state.pendingRequests = {
+      approvals: [
+        {
+          requestId: RuntimeRequestId.make("approval"),
+          requestKind: "command",
+          createdAt: "2026-09-05T00:00:00.000Z",
+          responseCapability: "live",
+        },
+      ],
+      userInputs: [],
+    };
+    expect(useThreadComposerState(NO_SIDE_CHATS).onUpdateInteractionMode).toBeUndefined();
   });
 });
 

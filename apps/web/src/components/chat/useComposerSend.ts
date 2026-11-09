@@ -254,6 +254,7 @@ interface ComposerSendInput {
   readonly setKeepFullHistory: (threadKey: string, keep: boolean) => void;
   readonly anchorNewTurn: TimelineFollow["anchorNewTurn"];
   readonly acknowledgeActiveThreadWoke: () => void;
+  readonly persistInteractionMode: (mode: ProviderInteractionMode) => void;
   readonly handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
   /** Resolves true once the side chat started and got the prompt. */
   readonly onSideChat?: ((prompt: string) => Promise<boolean>) | undefined;
@@ -346,6 +347,7 @@ export function useComposerSend(input: ComposerSendInput) {
     setKeepFullHistory,
     anchorNewTurn,
     acknowledgeActiveThreadWoke,
+    persistInteractionMode,
     handleInteractionModeChange,
     onSideChat,
     sideChatDisabledReason,
@@ -635,8 +637,12 @@ export function useComposerSend(input: ComposerSendInput) {
       interactionMode: contextInteractionMode,
       interactionModeEnabled: sendInteractionModeEnabled,
     } = sendCtx;
+    // Text sent over a shown approval answers it, so `/plan` there stays that literal text.
     const interactionModeCommand =
-      sendInteractionModeEnabled && !directAnnotation && !queuedRunEdit.isEditing
+      sendInteractionModeEnabled &&
+      !directAnnotation &&
+      !queuedRunEdit.isEditing &&
+      sendCtx.shownPendingApprovalIds.length === 0
         ? parseInteractionModeCommand(promptRef.current)
         : null;
     const sendInteractionMode = interactionModeCommand?.interactionMode ?? contextInteractionMode;
@@ -796,6 +802,8 @@ export function useComposerSend(input: ComposerSendInput) {
       sendInteractionModeEnabled &&
       !interactionModeCommand &&
       showPlanFollowUpPrompt &&
+      // The primary action is Resume, so an empty send must not implement the plan.
+      !sendCtx.resumeOwnsPrimaryAction &&
       activeProposedPlan &&
       composerImages.length === 0 &&
       composerFiles.length === 0
@@ -877,7 +885,7 @@ export function useComposerSend(input: ComposerSendInput) {
       composerHoldsOnlyText && interactionModeCommand?.prompt === ""
         ? interactionModeCommand.interactionMode
         : null;
-    if (standaloneSlashCommand && multipleModelSelections === null) {
+    if (standaloneSlashCommand) {
       handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
@@ -1237,6 +1245,14 @@ export function useComposerSend(input: ComposerSendInput) {
         return;
       }
     }
+    // The send is accepted, so the draft loses `/plan`. Its mode now carries the choice to the
+    // next message, and to a retry when a failed send restores only the text.
+    if (
+      interactionModeCommand &&
+      interactionModeCommand.interactionMode !== contextInteractionMode
+    ) {
+      persistInteractionMode(interactionModeCommand.interactionMode);
+    }
     if (sendQueuesBehindSetup) {
       setSetupQueueSendThreadKey(activeThreadKey);
     } else {
@@ -1541,7 +1557,7 @@ export function useComposerSend(input: ComposerSendInput) {
       if (isLocalDraftThread && draftId && draftThread) {
         restoreFailedDraftThread(
           draftId,
-          draftThread,
+          { ...draftThread, interactionMode: sendInteractionMode },
           wasBootstrapThreadDeleted(squashAtomCommandFailure(failure))
             ? newThreadId()
             : threadIdForSend,

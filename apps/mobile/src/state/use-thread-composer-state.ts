@@ -53,7 +53,11 @@ import {
   describeUnavailableModelSelection,
   isModelSelectionUnavailable,
 } from "../lib/modelOptions";
-import { resolveProviderInteractionMode } from "./legacy-plan-mode";
+import {
+  resolveLegacyPlanModeEnabled,
+  resolvePendingTaskInteractionMode,
+  resolveProviderInteractionMode,
+} from "./legacy-plan-mode";
 
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
@@ -120,6 +124,7 @@ import {
 import { setPendingConnectionError } from "./use-remote-environment-registry";
 import { clearThreadComposerError, setThreadComposerError } from "./thread-composer-error";
 import {
+  useSelectedThreadPendingRequests,
   useSelectedThreadProjection,
   useSelectedThreadVisibleTurnItems,
 } from "./use-thread-detail";
@@ -337,12 +342,21 @@ export function useThreadComposerState(input: {
   const selectedProvider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
     (provider) => provider.instanceId === modelSelection?.instanceId,
   );
+  const planModeEnabled = resolveLegacyPlanModeEnabled({
+    loaded: AsyncResult.isSuccess(preferencesResult),
+    preference: AsyncResult.isSuccess(preferencesResult)
+      ? preferencesResult.value.planModeEnabled
+      : undefined,
+  });
+  // Off on this device, a thread left in plan by another client or an earlier opt-in runs in default.
   const interactionMode = selectedThread
-    ? resolveProviderInteractionMode(
-        selectedProvider,
-        selectedDraft.interactionMode ?? selectedThread.interactionMode,
-      )
+    ? resolvePendingTaskInteractionMode({
+        planModeEnabled,
+        provider: selectedProvider,
+        draftInteractionMode: selectedDraft.interactionMode ?? selectedThread.interactionMode,
+      })
     : null;
+  const hasPendingApproval = (useSelectedThreadPendingRequests()?.approvals.length ?? 0) > 0;
   const canSwitchThreadProvider = threadAllowsProviderSwitch({
     thread: selectedThreadShell,
     projection: selectedThreadProjection?.projection,
@@ -710,8 +724,7 @@ export function useThreadComposerState(input: {
     );
     const modeCommand =
       beforeDispatch === undefined &&
-      AsyncResult.isSuccess(preferencesResult) &&
-      preferencesResult.value.planModeEnabled === true &&
+      planModeEnabled &&
       provider?.showInteractionModeToggle !== false
         ? parseInteractionModeCommand(text)
         : null;
@@ -833,10 +846,12 @@ export function useThreadComposerState(input: {
       context: draft.context,
       modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
-      interactionMode: resolveProviderInteractionMode(
+      interactionMode: resolvePendingTaskInteractionMode({
+        planModeEnabled,
         provider,
-        modeCommand?.interactionMode ?? draft.interactionMode ?? thread.interactionMode,
-      ),
+        draftInteractionMode:
+          modeCommand?.interactionMode ?? draft.interactionMode ?? thread.interactionMode,
+      }),
       ...(compactBeforeSend
         ? { compactBeforeSend, dispatchMode: "queue" as const }
         : followUpDispatchMode === null
@@ -982,7 +997,9 @@ export function useThreadComposerState(input: {
     onNativePasteText,
     onRemoveDraftImage,
     onSendMessage,
-    onUpdateInteractionMode,
+    // Absent unless opted in, and while an approval waits: a menu pick would erase its reply.
+    onUpdateInteractionMode:
+      planModeEnabled && !hasPendingApproval ? onUpdateInteractionMode : undefined,
     sideChatUnavailableReason,
   };
 }

@@ -96,6 +96,34 @@ describe("mobile slash commands", () => {
     },
   );
 
+  describe("a provider's own /plan and /default on a toggle-supporting provider", () => {
+    const codex = {
+      driver: ProviderDriverKind.make("codex"),
+      showInteractionModeToggle: true,
+      slashCommands: [
+        { name: "plan", description: "Native plan" },
+        { name: "DEFAULT", description: "Native default" },
+        { name: "review", description: "Native review" },
+      ],
+    };
+    const ids = (allowInteractionMode: boolean) =>
+      buildComposerSlashCommandItems({
+        query: "",
+        atMessageStart: true,
+        hasThread: true,
+        allowInteractionMode,
+        selectedProviderStatus: codex,
+      }).map((item) => item.id);
+
+    it("are hidden while T3's commands would consume the text", () => {
+      expect(ids(true)).toEqual(["cmd:model", "cmd:plan", "cmd:default", "pcmd:review"]);
+    });
+
+    it("stay available when T3's commands are not offered", () => {
+      expect(ids(false)).toEqual(["cmd:model", "pcmd:plan", "pcmd:DEFAULT", "pcmd:review"]);
+    });
+  });
+
   it("offers T3's /clear in place of the provider's, only at the message start", () => {
     const claude = {
       driver: ProviderDriverKind.make("claudeAgent"),
