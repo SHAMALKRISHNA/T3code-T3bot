@@ -337,16 +337,37 @@ describe("thread outbox", () => {
       selectedMessage,
     );
     expect(
-      resolveQueuedThreadSettings(legacyMessage, {
-        modelSelection: selectedMessage.modelSelection,
-        runtimeMode: selectedMessage.runtimeMode,
-        interactionMode: selectedMessage.interactionMode,
-      }),
+      resolveQueuedThreadSettings(
+        legacyMessage,
+        {
+          modelSelection: selectedMessage.modelSelection,
+          runtimeMode: selectedMessage.runtimeMode,
+          interactionMode: selectedMessage.interactionMode,
+        },
+        [],
+        true,
+      ),
     ).toEqual({
       modelSelection: selectedMessage.modelSelection,
       runtimeMode: selectedMessage.runtimeMode,
       interactionMode: selectedMessage.interactionMode,
     });
+  });
+
+  it("resolves a queued message's mode through the Plan mode opt-in", () => {
+    const thread = {
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    } as const;
+    const legacy = queuedMessage({ messageId: "legacy", createdAt: "2026-09-02T10:00:00.000Z" });
+    const mode = (message: QueuedThreadMessage, planModeEnabled: boolean) =>
+      resolveQueuedThreadSettings(message, thread, [], planModeEnabled).interactionMode;
+
+    expect(mode(legacy, false)).toBe("default");
+    expect(mode({ ...legacy, interactionMode: "plan" }, false)).toBe("default");
+    expect(mode(legacy, true)).toBe("plan");
+    expect(mode({ ...legacy, interactionMode: "default" }, true)).toBe("default");
   });
 
   it("normalizes queued plan mode against the queued provider, not the current thread", () => {
@@ -372,6 +393,7 @@ describe("thread outbox", () => {
         message,
         { modelSelection: codex, runtimeMode: "approval-required", interactionMode: "plan" },
         providers,
+        true,
       ),
     ).toEqual({
       modelSelection: antigravity,
@@ -387,6 +409,7 @@ describe("thread outbox", () => {
           interactionMode: "default",
         },
         providers,
+        true,
       ).interactionMode,
     ).toBe("plan");
   });

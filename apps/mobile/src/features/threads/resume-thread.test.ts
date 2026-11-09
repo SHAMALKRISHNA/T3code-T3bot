@@ -87,4 +87,34 @@ describe("resumeThread", () => {
 
     expect(calls.map((call) => call.command)).toEqual(["resumeQueue"]);
   });
+
+  it("leaves a stored plan mode before resuming a held queue, and keeps its approvals", async () => {
+    const { calls, base } = setup();
+    await resumeThread({
+      ...base,
+      thread: { ...base.thread, interactionMode: "plan", runtimeMode: "approval-required" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      resumableRunId: null,
+      queueHeld: true,
+    });
+
+    expect(calls.map((call) => call.command)).toEqual(["setInteractionMode", "resumeQueue"]);
+    expect(calls[0]?.input).toMatchObject({ interactionMode: "default" });
+  });
+
+  it("does not resume the queue when saving the mode fails", async () => {
+    const { calls, base } = setup();
+    const result = await resumeThread({
+      ...base,
+      thread: { ...base.thread, interactionMode: "plan" },
+      interactionMode: "default",
+      setInteractionMode: async () => failure,
+      resumableRunId: null,
+      queueHeld: true,
+    });
+
+    expect(result).toBe(failure);
+    expect(calls.map((call) => call.command)).toEqual([]);
+  });
 });

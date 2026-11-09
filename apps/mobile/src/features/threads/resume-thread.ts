@@ -78,6 +78,13 @@ export async function resumeThread<E>(input: {
       },
     });
     if (continued._tag === "Failure" || !input.queueHeld) return continued;
+  } else if (interactionMode !== thread.interactionMode) {
+    // Queued runs start in the thread's saved mode, so a plan mode left there would apply to them.
+    const saved = await input.setInteractionMode({
+      environmentId,
+      input: { threadId: thread.id, interactionMode, createdAt },
+    });
+    if (saved._tag === "Failure") return saved;
   }
   return input.resumeQueue({ environmentId, input: { threadId: thread.id } });
 }

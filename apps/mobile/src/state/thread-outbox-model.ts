@@ -30,7 +30,7 @@ import { withImplicitFastModeSelection } from "../lib/providerOptions";
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { DraftComposerAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
-import { resolveProviderInteractionMode } from "./legacy-plan-mode";
+import { resolvePendingTaskInteractionMode } from "./legacy-plan-mode";
 
 // Keep current writes until a compatible native baseline includes the v4 reader.
 const THREAD_OUTBOX_SCHEMA_VERSION = 3;
@@ -115,6 +115,8 @@ export function resolveQueuedThreadSettings(
       readonly models: ReadonlyArray<Pick<ServerProviderModel, "slug" | "capabilities">>;
     }
   > = [],
+  // Off unless the user opted in; a queued plan send then runs in the default mode.
+  planModeEnabled = false,
 ): ThreadSettingsSnapshot {
   const modelSelection = withImplicitFastModeSelection(
     message.modelSelection ?? thread.modelSelection,
@@ -126,10 +128,11 @@ export function resolveQueuedThreadSettings(
   return {
     modelSelection,
     runtimeMode: message.runtimeMode ?? thread.runtimeMode,
-    interactionMode: resolveProviderInteractionMode(
+    interactionMode: resolvePendingTaskInteractionMode({
+      planModeEnabled,
       provider,
-      message.interactionMode ?? thread.interactionMode,
-    ),
+      draftInteractionMode: message.interactionMode ?? thread.interactionMode,
+    }),
   };
 }
 

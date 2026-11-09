@@ -104,6 +104,15 @@ export function useComposerResume(input: ComposerResumeInput) {
     // Commands settle into a result, so this always runs.
     const resume = async () => {
       if (resumableRunId === null) {
+        // Queued runs start in the thread's saved mode, so a plan mode left there would apply to
+        // them. Their approvals stay as they are: only the mode follows the composer here.
+        const modeResult = await persistThreadSettingsForNextTurn({
+          threadId,
+          createdAt: new Date().toISOString(),
+          runtimeMode: activeThread.runtimeMode,
+          interactionMode,
+        });
+        if (modeResult._tag === "Failure") return modeResult;
         return resumeThreadQueue({ environmentId, input: { threadId } });
       }
       // Read before the first await: the composer follows the route, so after the user switches

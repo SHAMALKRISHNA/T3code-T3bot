@@ -40,7 +40,9 @@ import {
   forgetAcknowledgedThreadMessage,
 } from "./acknowledged-thread-messages";
 import { appAtomRegistry } from "./atom-registry";
+import { resolveLegacyPlanModeEnabled } from "./legacy-plan-mode";
 import { restoredNewTaskDraftKey } from "./new-task-draft-key";
+import { mobilePreferencesAtom } from "./preferences";
 import {
   clearPendingThreadCreationOutcome,
   pendingThreadCreationOutcomesAtom,
@@ -602,7 +604,14 @@ const deliveryInputsAtom = Atom.make((get) => {
       operableEnvironments.add(environmentId);
     }
   }
+  const preferences = get(mobilePreferencesAtom);
   return {
+    planModeEnabled: resolveLegacyPlanModeEnabled({
+      loaded: AsyncResult.isSuccess(preferences),
+      preference: AsyncResult.isSuccess(preferences)
+        ? preferences.value.planModeEnabled
+        : undefined,
+    }),
     dispatchingQueuedMessageId: get(dispatchingQueuedMessageIdAtom),
     editingQueuedMessageIds: get(editingQueuedMessageIdsAtom),
     queuedMessagesByThreadKey: get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
@@ -783,6 +792,7 @@ export function createThreadOutboxDelivery(): {
   const sendQueuedMessage = async (
     queuedMessage: QueuedThreadMessage,
     thread: EnvironmentThreadShell,
+    planModeEnabled: boolean,
   ): Promise<boolean> => {
     const hasAccess = () =>
       readEnvironmentScope(queuedMessage.environmentId, AuthOrchestrationOperateScope);
@@ -791,7 +801,12 @@ export function createThreadOutboxDelivery(): {
       serverEnvironment.configValueAtom(queuedMessage.environmentId),
     );
     if (!serverConfig) return false;
-    const settings = resolveQueuedThreadSettings(queuedMessage, thread, serverConfig.providers);
+    const settings = resolveQueuedThreadSettings(
+      queuedMessage,
+      thread,
+      serverConfig.providers,
+      planModeEnabled,
+    );
     if (isModelSelectionUnavailable(serverConfig, settings.modelSelection, thread.projectId)) {
       const { title, detail } = describeUnavailableModelSelection(
         serverConfig,
@@ -889,6 +904,7 @@ export function createThreadOutboxDelivery(): {
       queuedMessage,
       settings,
       currentConfig.providers,
+      planModeEnabled,
     );
     if (queuedMessage.compactBeforeSend === true) {
       if (!hasAccess()) return true;
@@ -980,6 +996,7 @@ export function createThreadOutboxDelivery(): {
     queuedMessage: QueuedThreadMessage,
     creation: QueuedThreadCreation,
     projectCwd: string,
+    planModeEnabled: boolean,
   ): Promise<boolean> => {
     const hasAccess = () =>
       readEnvironmentScope(queuedMessage.environmentId, AuthOrchestrationOperateScope);
@@ -1000,6 +1017,7 @@ export function createThreadOutboxDelivery(): {
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
       },
       serverConfig.providers,
+      planModeEnabled,
     );
     if (isModelSelectionUnavailable(serverConfig, settings.modelSelection, creation.projectId)) {
       const { title, detail } = describeUnavailableModelSelection(
@@ -1061,6 +1079,7 @@ export function createThreadOutboxDelivery(): {
       queuedMessage,
       settings,
       currentConfig.providers,
+      planModeEnabled,
     );
     if (!hasAccess()) return true;
     let workspace = creation;
@@ -1172,6 +1191,7 @@ export function createThreadOutboxDelivery(): {
 
   function drainPass(): void {
     const {
+      planModeEnabled,
       dispatchingQueuedMessageId,
       editingQueuedMessageIds,
       queuedMessagesByThreadKey,
@@ -1402,10 +1422,10 @@ export function createThreadOutboxDelivery(): {
             : removeQueuedMessage("[thread-outbox] failed to remove message for a missing thread")
           : creation !== undefined
             ? creationProjectCwd !== null
-              ? sendQueuedCreation(nextQueuedMessage, creation, creationProjectCwd)
+              ? sendQueuedCreation(nextQueuedMessage, creation, creationProjectCwd, planModeEnabled)
               : removeQueuedMessage("[thread-outbox] dropped pending task for a missing project")
             : thread !== undefined
-              ? sendQueuedMessage(nextQueuedMessage, thread)
+              ? sendQueuedMessage(nextQueuedMessage, thread, planModeEnabled)
               : Promise.resolve(false);
       });
       settle(messageId, delivery);
