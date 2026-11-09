@@ -594,33 +594,6 @@ export function useComposerSend(input: ComposerSendInput) {
       (approval) =>
         approval.supportsFeedback && approval.requestId === sendCtx.shownPendingApprovalIds[0],
     );
-    const multipleModelBlock =
-      multipleModelSelections === null
-        ? null
-        : multipleModelSendBlock({
-            selectionCount: multipleModelSelections.length,
-            serverSupportsWorktreeBootstrap:
-              readEnvironmentPresentation(activeThread.environmentId)?.serverConfig?.environment
-                .capabilities.requiredWorktreeBootstrap === true,
-            isLocalDraftThread,
-            isGitRepo,
-            branch: activeThreadBranch,
-          });
-    if (multipleModelBlock === "server-outdated") {
-      setThreadError(activeThread.id, "Update this server before starting multiple models.");
-      return;
-    }
-    if (multipleModelBlock === "needs-new-git-thread") {
-      toastManager.add(
-        stackedThreadToast({
-          type: "warning",
-          title: "Choose models and a base branch",
-          description:
-            "Multiple models need a new thread in a Git project. Each gets its own worktree.",
-        }),
-      );
-      return;
-    }
     const {
       images: sendContextImages,
       files: composerFiles,
@@ -890,6 +863,34 @@ export function useComposerSend(input: ComposerSendInput) {
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
+      return;
+    }
+    // After the mode commands above, which start nothing and so need none of this.
+    const multipleModelBlock =
+      multipleModelSelections === null
+        ? null
+        : multipleModelSendBlock({
+            selectionCount: multipleModelSelections.length,
+            serverSupportsWorktreeBootstrap:
+              readEnvironmentPresentation(activeThread.environmentId)?.serverConfig?.environment
+                .capabilities.requiredWorktreeBootstrap === true,
+            isLocalDraftThread,
+            isGitRepo,
+            branch: activeThreadBranch,
+          });
+    if (multipleModelBlock === "server-outdated") {
+      setThreadError(activeThread.id, "Update this server before starting multiple models.");
+      return;
+    }
+    if (multipleModelBlock === "needs-new-git-thread") {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Choose models and a base branch",
+          description:
+            "Multiple models need a new thread in a Git project. Each gets its own worktree.",
+        }),
+      );
       return;
     }
     if (!hasSendableContent) {

@@ -590,6 +590,87 @@ describe("mobile Plan mode opt-in", () => {
   });
 });
 
+describe("mobile mode commands around a pending question", () => {
+  const requestId = RuntimeRequestId.make("input");
+  const pendingQuestion = (): PendingThreadRequests => ({
+    approvals: [],
+    userInputs: [
+      {
+        requestId,
+        createdAt: "2026-09-05T00:00:00.000Z",
+        responseCapability: "live",
+        dismissible: false,
+        questions: [state.question],
+      },
+    ],
+  });
+
+  beforeEach(() => {
+    state.grantedEnvironments.add("secondary");
+    setPreferences(AsyncResult.success({ planModeEnabled: true }));
+  });
+
+  it("withholds mode changes while a question waits", () => {
+    state.pendingRequests = pendingQuestion();
+    expect(useThreadComposerState(NO_SIDE_CHATS).onUpdateInteractionMode).toBeUndefined();
+  });
+
+  it("does not take /plan text apart while a question waits", async () => {
+    state.pendingRequests = pendingQuestion();
+    state.draft = { ...state.draft, text: "/plan use the other file" };
+    expect(await useThreadComposerState(NO_SIDE_CHATS).onSendMessage()).toBe("message");
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ text: "/plan use the other file", interactionMode: "default" }),
+    );
+    expect(state.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("does not swallow a lone /default while a question waits", async () => {
+    state.pendingRequests = pendingQuestion();
+    state.thread.interactionMode = "plan";
+    state.draft = { ...state.draft, text: "/default" };
+    expect(await useThreadComposerState(NO_SIDE_CHATS).onSendMessage()).toBe("message");
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ text: "/default", interactionMode: "plan" }),
+    );
+    expect(state.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("submits a custom answer that starts with /plan exactly as typed", async () => {
+    state.pendingRequests = pendingQuestion();
+    useSelectedThreadRequests().onChangeUserInputCustomAnswer(
+      requestId,
+      state.question.id,
+      "/plan use the other file",
+    );
+    await useSelectedThreadRequests().onSubmitUserInput();
+    expect(state.answer).toHaveBeenCalledWith({
+      environmentId: "secondary",
+      input: {
+        threadId: "thread",
+        requestId: "input",
+        answers: { language: "/plan use the other file" },
+      },
+    });
+    expect(state.updateSettings).not.toHaveBeenCalled();
+    expect(state.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("still applies mode commands once nothing is pending", async () => {
+    state.pendingRequests = { approvals: [], userInputs: [] };
+    state.draft = { ...state.draft, text: "/plan inspect the code" };
+    const composer = useThreadComposerState(NO_SIDE_CHATS);
+    expect(composer.onUpdateInteractionMode).toBeTypeOf("function");
+    expect(await composer.onSendMessage()).toBe("message");
+    expect(state.updateSettings).toHaveBeenCalledWith("secondary:thread", {
+      interactionMode: "plan",
+    });
+    expect(state.enqueue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ text: "inspect the code", interactionMode: "plan" }),
+    );
+  });
+});
+
 describe("mobile handoff preview and submission", () => {
   it("follows project enablement and provider availability for the selected destination", async () => {
     state.grantedEnvironments.add("secondary");

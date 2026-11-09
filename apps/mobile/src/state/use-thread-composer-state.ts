@@ -356,7 +356,9 @@ export function useThreadComposerState(input: {
         draftInteractionMode: selectedDraft.interactionMode ?? selectedThread.interactionMode,
       })
     : null;
-  const hasPendingApproval = (useSelectedThreadPendingRequests()?.approvals.length ?? 0) > 0;
+  const pendingRequests = useSelectedThreadPendingRequests();
+  const hasPendingRequest =
+    (pendingRequests?.approvals.length ?? 0) + (pendingRequests?.userInputs.length ?? 0) > 0;
   const canSwitchThreadProvider = threadAllowsProviderSwitch({
     thread: selectedThreadShell,
     projection: selectedThreadProjection?.projection,
@@ -722,8 +724,10 @@ export function useThreadComposerState(input: {
     const provider = serverConfig?.providers.find(
       (entry) => entry.instanceId === modelSelection.instanceId,
     );
+    // Text sent while the agent waits on a reply stays literal, so `/plan` is not taken apart.
     const modeCommand =
       beforeDispatch === undefined &&
+      !hasPendingRequest &&
       planModeEnabled &&
       provider?.showInteractionModeToggle !== false
         ? parseInteractionModeCommand(text)
@@ -997,9 +1001,9 @@ export function useThreadComposerState(input: {
     onNativePasteText,
     onRemoveDraftImage,
     onSendMessage,
-    // Absent unless opted in, and while an approval waits: a menu pick would erase its reply.
+    // Absent unless opted in, and while a request waits: a menu pick would erase its reply.
     onUpdateInteractionMode:
-      planModeEnabled && !hasPendingApproval ? onUpdateInteractionMode : undefined,
+      planModeEnabled && !hasPendingRequest ? onUpdateInteractionMode : undefined,
     sideChatUnavailableReason,
   };
 }

@@ -341,14 +341,14 @@ it("the composer hint stops promising that a blank send implements while Resume 
     .toHaveAttribute("aria-placeholder", "Add feedback to refine the plan");
 });
 
-it("a typed /plan switches modes while multiple models are selected", async () => {
-  const draftId = DraftId.make("draft-fanout");
-  const threadId = ThreadId.make("thread-draft-fanout");
+function fanoutDraft(name: string, branch?: string) {
+  const draftId = DraftId.make(`draft-${name}`);
+  const threadId = ThreadId.make(`thread-draft-${name}`);
   useComposerDraftStore
     .getState()
     .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
       threadId,
-      branch: "main",
+      ...(branch === undefined ? {} : { branch }),
     });
   const instanceId = ProviderInstanceId.make("codex");
   appAtomRegistry.set(
@@ -358,6 +358,36 @@ it("a typed /plan switches modes while multiple models are selected", async () =
       { instanceId, model: "gpt-5.5" },
     ],
   );
+  return draftId;
+}
+
+it("a typed /plan switches modes on a multiple-model draft that cannot start", async () => {
+  // No branch, so the models could not start: the mode switch needs none of that.
+  const draftId = fanoutDraft("fanout-blocked");
+  await using _app = await mount(`/draft/${draftId}`);
+  await userEvent.click(page.getByTestId("composer-editor"));
+  await typeAndPressEnter("/plan ");
+  await vi.waitFor(() =>
+    expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.interactionMode).toBe(
+      "plan",
+    ),
+  );
+  expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt ?? "").toBe("");
+});
+
+it("a message on a multiple-model draft that cannot start still stops at the warning", async () => {
+  const draftId = fanoutDraft("fanout-blocked-message");
+  await using _app = await mount(`/draft/${draftId}`);
+  await userEvent.click(page.getByTestId("composer-editor"));
+  await typeAndPressEnter("/plan inspect the code");
+  await expect.element(page.getByText("Choose models and a base branch").first()).toBeVisible();
+  const draft = useComposerDraftStore.getState().getComposerDraft(draftId);
+  expect(draft?.prompt).toBe("/plan inspect the code");
+  expect(draft?.interactionMode ?? null).toBeNull();
+});
+
+it("a typed /plan switches modes while multiple models are selected", async () => {
+  const draftId = fanoutDraft("fanout", "main");
   await using _app = await mount(`/draft/${draftId}`);
   await userEvent.click(page.getByTestId("composer-editor"));
   // The space closes the slash menu, so Enter reaches the send path.
