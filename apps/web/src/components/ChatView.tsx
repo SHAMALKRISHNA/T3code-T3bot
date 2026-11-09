@@ -427,6 +427,8 @@ type ChatViewProps =
 
 const DismissedFallbackWindowSchema = Schema.NullOr(Schema.String);
 
+const isoTimestampNow = () => new Date().toISOString();
+
 export default function ChatView(props: ChatViewProps) {
   const {
     environmentId,
@@ -1901,26 +1903,6 @@ export default function ChatView(props: ChatViewProps) {
     scheduleComposerFocus();
   };
   const insertArtifactTemplateStable = useStableCallback(insertArtifactTemplate);
-  const sendAppMessage = async (text: string) => {
-    if (!isServerThread || activeThreadId === null) {
-      throw new Error("Messages from apps need a started thread.");
-    }
-    const result = await startThreadTurn({
-      environmentId,
-      input: {
-        threadId: activeThreadId,
-        message: { messageId: newMessageId(), role: "user", text, attachments: [] },
-        runtimeMode,
-        interactionMode,
-        dispatchMode: "queue",
-      },
-    });
-    if (result._tag === "Failure") {
-      const error = squashAtomCommandFailure(result);
-      throw error instanceof Error ? error : new Error("Could not send the app's message.");
-    }
-  };
-  const sendAppMessageStable = useStableCallback(sendAppMessage);
   const queuedRunsControlRef = useRef<QueuedRunsControlHandle>(null);
 
   const {
@@ -2135,6 +2117,37 @@ export default function ChatView(props: ChatViewProps) {
     }
     return result;
   };
+  const sendAppMessage = async (text: string) => {
+    if (!isServerThread || activeThreadId === null) {
+      throw new Error("Messages from apps need a started thread.");
+    }
+    // The turn runs in the thread's saved mode, so a plan mode left there would apply to it. The
+    // app gets no say in approvals: only the mode follows the composer here.
+    const modeResult = await persistThreadSettingsForNextTurn({
+      threadId: activeThreadId,
+      createdAt: isoTimestampNow(),
+      runtimeMode: serverThread?.runtimeMode ?? runtimeMode,
+      interactionMode,
+    });
+    const result =
+      modeResult._tag === "Failure"
+        ? modeResult
+        : await startThreadTurn({
+            environmentId,
+            input: {
+              threadId: activeThreadId,
+              message: { messageId: newMessageId(), role: "user", text, attachments: [] },
+              runtimeMode,
+              interactionMode,
+              dispatchMode: "queue",
+            },
+          });
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
+      throw error instanceof Error ? error : new Error("Could not send the app's message.");
+    }
+  };
+  const sendAppMessageStable = useStableCallback(sendAppMessage);
 
   const {
     showScrollToBottom,

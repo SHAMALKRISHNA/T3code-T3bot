@@ -30,6 +30,9 @@ export function useStartSideChat() {
   const forkSideChat = useAtomCommand(threadEnvironment.forkSideChat, { reportFailure: false });
   const deleteThread = useAtomCommand(threadEnvironment.delete, { reportFailure: false });
   const setRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, { reportFailure: false });
+  const setInteractionMode = useAtomCommand(threadEnvironment.setInteractionMode, {
+    reportFailure: false,
+  });
   const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const openLinkedThread = useOpenLinkedThread();
 
@@ -93,6 +96,22 @@ export function useStartSideChat() {
       });
       if (mode._tag === "Failure") {
         alertFailure(mode, "Could not set the side chat's permission mode.");
+        discard();
+        return false;
+      }
+    }
+    // The fork copied its source's mode, and a turn runs in the thread's saved mode.
+    if (sideChat.interactionMode !== "default") {
+      const mode = await setInteractionMode({
+        environmentId: source.environmentId,
+        input: {
+          threadId: targetThreadId,
+          interactionMode: "default",
+          createdAt: new Date().toISOString(),
+        },
+      });
+      if (mode._tag === "Failure") {
+        alertFailure(mode, "Could not set the side chat's mode.");
         discard();
         return false;
       }

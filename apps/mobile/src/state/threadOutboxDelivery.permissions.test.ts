@@ -278,6 +278,9 @@ describe("queued messages and the Plan mode opt-in", () => {
     await runDrain();
     expect(savedModes()).toEqual(["default"]);
     expect(startedMode()).toBe("default");
+    // The downgrade costs the mode, not the message: its text still goes out, and it leaves the queue.
+    expect(state.start.mock.calls[0]?.[0].input.message.text).toBe("Keep this queued");
+    expect(remaining()).toEqual([]);
   });
 
   it("starts a new thread carrying plan in default while Plan mode is off", async () => {

@@ -37,6 +37,9 @@ export function useSideChat(input: {
   const setThreadRuntimeMode = useOrchestrationCommand(threadEnvironment.setRuntimeMode, {
     reportFailure: false,
   });
+  const setThreadInteractionMode = useOrchestrationCommand(threadEnvironment.setInteractionMode, {
+    reportFailure: false,
+  });
   const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
     reportFailure: false,
   });
@@ -91,6 +94,22 @@ export function useSideChat(input: {
     const text = prompt?.trim();
     // Send before showing the tab: closing a tab whose side chat has no run deletes it.
     if (text) {
+      // The fork copied its source's mode, and a turn runs in the thread's saved mode.
+      if (sideChat.interactionMode !== "default") {
+        const mode = await setThreadInteractionMode({
+          environmentId: threadRef.environmentId,
+          input: {
+            threadId: targetThreadId,
+            interactionMode: "default",
+            createdAt: new Date().toISOString(),
+          },
+        });
+        if (mode._tag === "Failure") {
+          reportFailure(mode, "Could not set the side chat's mode.");
+          discard();
+          return false;
+        }
+      }
       const turn = await startThreadTurn({
         environmentId: threadRef.environmentId,
         input: {
