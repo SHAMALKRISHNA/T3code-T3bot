@@ -94,7 +94,10 @@ vi.mock("./queued-run-edit", () => ({
 }));
 vi.mock("./preferences", async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
-  return { mobilePreferencesAtom: Atom.make(AsyncResult.success({})).pipe(Atom.keepAlive) };
+  return {
+    mobilePreferencesAtom: Atom.make(AsyncResult.success({})).pipe(Atom.keepAlive),
+    mobilePreferencesLoadFailedAtom: Atom.make(false).pipe(Atom.keepAlive),
+  };
 });
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 vi.mock("@effect/atom-react", async () => {
@@ -194,7 +197,7 @@ vi.mock("./use-remote-environment-registry", () => ({ setPendingConnectionError:
 
 import { Alert } from "react-native";
 import { appAtomRegistry } from "./atom-registry";
-import { mobilePreferencesAtom } from "./preferences";
+import { mobilePreferencesAtom, mobilePreferencesLoadFailedAtom } from "./preferences";
 import { useThreadComposerState } from "./use-thread-composer-state";
 import { useSelectedThreadRequests } from "./use-selected-thread-requests";
 
@@ -566,6 +569,25 @@ describe("mobile Plan mode opt-in", () => {
     expect(state.enqueue).toHaveBeenLastCalledWith(
       expect.objectContaining({ interactionMode: "plan" }),
     );
+  });
+
+  describe("when the preference could not be read", () => {
+    const setLoadFailed = (failed: boolean) =>
+      appAtomRegistry.set(
+        mobilePreferencesLoadFailedAtom as unknown as Atom.Writable<boolean>,
+        failed,
+      );
+
+    it("queues the message in its own mode, so the outbox can hold it", async () => {
+      state.grantedEnvironments.add("secondary");
+      state.thread.interactionMode = "plan";
+      setLoadFailed(true);
+      await useThreadComposerState(NO_SIDE_CHATS).onSendMessage();
+      setLoadFailed(false);
+      expect(state.enqueue).toHaveBeenLastCalledWith(
+        expect.objectContaining({ interactionMode: "plan" }),
+      );
+    });
   });
 
   it("offers mode changes only when opted in with no approval waiting on a reply", () => {

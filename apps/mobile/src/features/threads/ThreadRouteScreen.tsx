@@ -679,6 +679,14 @@ function ThreadRouteContent(
 
   const handleResumeQueue = async () => {
     if (!selectedThread) return;
+    // Resuming saves the composer's mode, and with the opt-in unreadable that could be the wrong one.
+    if (composer.planModeOptIn === "unknown" && selectedThread.interactionMode === "plan") {
+      Dialog.alert(
+        "Plan Mode setting unavailable",
+        "This thread is in plan mode and the Plan Mode setting could not be read. Turn Plan Mode on or off in Settings, then try again.",
+      );
+      return;
+    }
     const result = await resumeThread({
       thread: selectedThread,
       resumableRunId: composer.resumableRunId,

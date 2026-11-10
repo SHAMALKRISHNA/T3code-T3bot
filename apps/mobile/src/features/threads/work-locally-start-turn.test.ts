@@ -65,6 +65,15 @@ describe("buildWorkLocallyStartTurnInput", () => {
     expect(input.interactionMode).toBe("default");
   });
 
+  // The server launches this as a new thread with the payload's mode, so the source thread's
+  // stored plan mode never applies and there is nothing to save on it first.
+  it("launches a new thread that carries its own mode, instead of running the source thread", () => {
+    const input = build({ stored: "plan", planModeEnabled: false });
+    expect(input.threadId).toBe("thread");
+    expect(input.bootstrap.createThread).toMatchObject({ interactionMode: "default" });
+    expect(input).not.toHaveProperty("reuseExistingThread");
+  });
+
   it("keeps the thread's model, approvals and server-held message", () => {
     const input = build({ stored: "default", planModeEnabled: false });
     expect(input.runtimeMode).toBe("approval-required");

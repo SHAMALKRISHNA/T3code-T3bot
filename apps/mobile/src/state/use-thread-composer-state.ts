@@ -54,8 +54,8 @@ import {
   isModelSelectionUnavailable,
 } from "../lib/modelOptions";
 import {
-  resolveLegacyPlanModeEnabled,
   resolvePendingTaskInteractionMode,
+  resolvePlanModeOptIn,
   resolveProviderInteractionMode,
 } from "./legacy-plan-mode";
 
@@ -110,7 +110,7 @@ import { AsyncResult } from "effect/reactivity";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { prepareTurnAttachments } from "../lib/attachmentUpload";
 import { DEFAULT_FOLLOW_UP_BEHAVIOR } from "../lib/followUpBehavior";
-import { mobilePreferencesAtom } from "./preferences";
+import { mobilePreferencesAtom, mobilePreferencesLoadFailedAtom } from "./preferences";
 import { environmentThreadDetails } from "./threads";
 import {
   endQueuedRunEdit,
@@ -342,12 +342,11 @@ export function useThreadComposerState(input: {
   const selectedProvider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
     (provider) => provider.instanceId === modelSelection?.instanceId,
   );
-  const planModeEnabled = resolveLegacyPlanModeEnabled({
-    loaded: AsyncResult.isSuccess(preferencesResult),
-    preference: AsyncResult.isSuccess(preferencesResult)
-      ? preferencesResult.value.planModeEnabled
-      : undefined,
-  });
+  const planModeOptIn = resolvePlanModeOptIn(
+    preferencesResult,
+    useAtomValue(mobilePreferencesLoadFailedAtom),
+  );
+  const planModeEnabled = planModeOptIn === "on";
   // Off on this device, a thread left in plan by another client or an earlier opt-in runs in default.
   const interactionMode = selectedThread
     ? resolvePendingTaskInteractionMode({
@@ -850,12 +849,20 @@ export function useThreadComposerState(input: {
       context: draft.context,
       modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
-      interactionMode: resolvePendingTaskInteractionMode({
-        planModeEnabled,
-        provider,
-        draftInteractionMode:
-          modeCommand?.interactionMode ?? draft.interactionMode ?? thread.interactionMode,
-      }),
+      // With the opt-in unreadable the mode stays as it is, so the outbox can hold the message
+      // rather than save a default this device may not have chosen.
+      interactionMode:
+        planModeOptIn === "unknown"
+          ? resolveProviderInteractionMode(
+              provider,
+              draft.interactionMode ?? thread.interactionMode,
+            )
+          : resolvePendingTaskInteractionMode({
+              planModeEnabled,
+              provider,
+              draftInteractionMode:
+                modeCommand?.interactionMode ?? draft.interactionMode ?? thread.interactionMode,
+            }),
       ...(compactBeforeSend
         ? { compactBeforeSend, dispatchMode: "queue" as const }
         : followUpDispatchMode === null
@@ -992,6 +999,7 @@ export function useThreadComposerState(input: {
     canSwitchThreadProvider,
     runtimeMode,
     interactionMode,
+    planModeOptIn,
     activeThreadBusy,
     interruptibleRunId,
     onChangeDraftMessage,

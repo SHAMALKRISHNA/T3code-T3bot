@@ -40,9 +40,13 @@ import {
   forgetAcknowledgedThreadMessage,
 } from "./acknowledged-thread-messages";
 import { appAtomRegistry } from "./atom-registry";
-import { resolveLegacyPlanModeEnabled } from "./legacy-plan-mode";
+import { resolvePlanModeOptIn } from "./legacy-plan-mode";
 import { restoredNewTaskDraftKey } from "./new-task-draft-key";
-import { mobilePreferencesAtom } from "./preferences";
+import {
+  mobilePreferencesAtom,
+  mobilePreferencesLoadFailedAtom,
+  mobilePreferencesStoredAtom,
+} from "./preferences";
 import {
   clearPendingThreadCreationOutcome,
   pendingThreadCreationOutcomesAtom,
@@ -591,6 +595,9 @@ async function preserveUploadedAttachmentsForEditor(
 
 // Everything a drain pass decides from. Each queued environment's session is
 // read here so a granted or revoked operate scope re-runs the drain.
+const UNKNOWN_OPT_IN_HOLD_MESSAGE =
+  "Waiting to send: the Plan Mode setting could not be read, so this message's mode is unknown. Trying again. Turn Plan Mode on or off in Settings to send it now.";
+
 const deliveryInputsAtom = Atom.make((get) => {
   const connectedEnvironments = get(workspaceConnections.environmentsAtom);
   const operableEnvironments = new Set<EnvironmentId>();
@@ -604,14 +611,11 @@ const deliveryInputsAtom = Atom.make((get) => {
       operableEnvironments.add(environmentId);
     }
   }
-  const preferences = get(mobilePreferencesAtom);
   return {
-    planModeEnabled: resolveLegacyPlanModeEnabled({
-      loaded: AsyncResult.isSuccess(preferences),
-      preference: AsyncResult.isSuccess(preferences)
-        ? preferences.value.planModeEnabled
-        : undefined,
-    }),
+    planModeOptIn: resolvePlanModeOptIn(
+      get(mobilePreferencesAtom),
+      get(mobilePreferencesLoadFailedAtom),
+    ),
     dispatchingQueuedMessageId: get(dispatchingQueuedMessageIdAtom),
     editingQueuedMessageIds: get(editingQueuedMessageIdsAtom),
     queuedMessagesByThreadKey: get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
@@ -1169,6 +1173,8 @@ export function createThreadOutboxDelivery(): {
   // notifies subscribers synchronously, so drain() can be called from inside a pass. That call
   // only asks for another pass; a nested pass would decide from inputs the outer one is still
   // acting on and could start a second delivery.
+  // Message ids mapped to the thread whose composer shows why they are waiting.
+  const heldForUnknownOptIn = new Map<MessageId, string>();
   let draining = false;
   let drainRequested = false;
   function drain(): void {
@@ -1191,7 +1197,7 @@ export function createThreadOutboxDelivery(): {
 
   function drainPass(): void {
     const {
-      planModeEnabled,
+      planModeOptIn,
       dispatchingQueuedMessageId,
       editingQueuedMessageIds,
       queuedMessagesByThreadKey,
@@ -1205,6 +1211,12 @@ export function createThreadOutboxDelivery(): {
     if (dispatchingQueuedMessageId !== null) {
       return;
     }
+    // Nothing is sent or saved until the opt-in is known. Loading ends in a value or a failed
+    // read, and either change wakes this subscriber.
+    if (planModeOptIn === "pending") {
+      return;
+    }
+    const planModeEnabled = planModeOptIn === "on";
 
     const queuedMessageIds = new Set(
       Object.values(queuedMessagesByThreadKey)
@@ -1214,6 +1226,14 @@ export function createThreadOutboxDelivery(): {
     for (const messageId of acknowledgedExistingThreadMessageIds) {
       if (!queuedMessageIds.has(messageId)) {
         acknowledgedExistingThreadMessageIds.delete(messageId);
+      }
+    }
+    // Release a hold as soon as its reason is gone, instead of waiting out the retry backoff.
+    for (const [messageId, threadKey] of heldForUnknownOptIn) {
+      if (planModeOptIn !== "unknown" || !queuedMessageIds.has(messageId)) {
+        heldForUnknownOptIn.delete(messageId);
+        clearRetry(messageId);
+        clearThreadComposerError(threadKey, messageId);
       }
     }
     for (const [messageId, release] of familyMounts) {
@@ -1375,6 +1395,21 @@ export function createThreadOutboxDelivery(): {
         if (creationProjectCwd === null && shellStatus !== "live") {
           continue;
         }
+      }
+      // With the opt-in unreadable, a message that would run in plan might be either mode. It
+      // waits in the queue, where it is safe and editable, while the read is retried. Anything
+      // that goes out in default either way still sends.
+      if (
+        deliveryAction === "send" &&
+        planModeOptIn === "unknown" &&
+        (nextQueuedMessage.interactionMode ?? thread?.interactionMode) === "plan"
+      ) {
+        heldForUnknownOptIn.set(messageId, threadKey);
+        setThreadComposerError(threadKey, UNKNOWN_OPT_IN_HOLD_MESSAGE, messageId);
+        // In this order: the refresh re-enters drain(), which the retry's notBefore then skips.
+        scheduleRetry(messageId);
+        appAtomRegistry.refresh(mobilePreferencesStoredAtom);
+        continue;
       }
 
       beginDispatchingQueuedMessage(messageId);

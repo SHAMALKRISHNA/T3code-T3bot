@@ -22,18 +22,26 @@ type PreferencesUpdate =
 export function createMobilePreferencesState(
   runtime: Atom.AtomRuntime<MobilePreferences.MobilePreferencesStore>,
 ) {
+  // A failed read falls back to empty preferences, which would read as "never opted in". The
+  // read keeps the failure beside the value, so both change in one update.
   const storedPreferencesAtom = runtime
     .atom(
       MobilePreferences.MobilePreferencesStore.pipe(
         Effect.flatMap((store) => store.load),
+        Effect.map((preferences) => ({ preferences, loadFailed: false })),
         Effect.catch((error) =>
           Effect.logWarning("Could not load mobile preferences.", error).pipe(
-            Effect.as<MobilePreferences.Preferences>({}),
+            Effect.as({ preferences: {} as MobilePreferences.Preferences, loadFailed: true }),
           ),
         ),
       ),
     )
     .pipe(Atom.keepAlive, Atom.withLabel("mobile:preferences:stored"));
+  // Stays true while a retry is in flight, until the new value replaces the fallback.
+  const loadFailedAtom = Atom.make((get) => {
+    const read = get(storedPreferencesAtom);
+    return AsyncResult.isSuccess(read) && read.value.loadFailed;
+  }).pipe(Atom.keepAlive, Atom.withLabel("mobile:preferences:load-failed"));
 
   const optimisticPatchAtom = Atom.make<OptimisticPreferences>({ values: {}, versions: {} }).pipe(
     Atom.keepAlive,
@@ -49,7 +57,7 @@ export function createMobilePreferencesState(
     const stored = get(storedPreferencesAtom);
     const confirmed = get(confirmedPreferencesAtom);
     const optimistic = get(optimisticPatchAtom);
-    return AsyncResult.map(stored, (preferences) => ({
+    return AsyncResult.map(stored, ({ preferences }) => ({
       ...preferences,
       ...confirmed,
       ...optimistic.values,
@@ -126,11 +134,14 @@ export function createMobilePreferencesState(
     )
     .pipe(Atom.keepAlive, Atom.withLabel("mobile:preferences:update"));
 
-  return { preferencesAtom, updatePreferencesAtom } as const;
+  return { preferencesAtom, updatePreferencesAtom, loadFailedAtom, storedPreferencesAtom } as const;
 }
 
 const mobilePreferencesRuntime = Atom.runtime(Runtime.layer);
 const mobilePreferencesState = createMobilePreferencesState(mobilePreferencesRuntime);
 
 export const mobilePreferencesAtom = mobilePreferencesState.preferencesAtom;
+export const mobilePreferencesLoadFailedAtom = mobilePreferencesState.loadFailedAtom;
+/** Refresh this to read stored preferences again after a failed load. */
+export const mobilePreferencesStoredAtom = mobilePreferencesState.storedPreferencesAtom;
 export const updateMobilePreferencesAtom = mobilePreferencesState.updatePreferencesAtom;

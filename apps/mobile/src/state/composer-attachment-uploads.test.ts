@@ -114,7 +114,11 @@ vi.mock("./server", async () => {
 });
 vi.mock("./preferences", async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
-  return { mobilePreferencesAtom: Atom.make(AsyncResult.success({})) };
+  return {
+    mobilePreferencesAtom: Atom.make(AsyncResult.success({})),
+    mobilePreferencesLoadFailedAtom: Atom.make(false),
+    mobilePreferencesStoredAtom: Atom.make(0),
+  };
 });
 vi.mock("./git", () => ({ gitEnvironment: {} }));
 vi.mock("./threads", () => ({ threadEnvironment: {} }));

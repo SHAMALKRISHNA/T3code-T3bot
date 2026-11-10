@@ -31,6 +31,7 @@ import { threadEnvironment } from "../../state/threads";
 import { useQuietThreadShell, useThreadProjection } from "../../state/entities";
 import { useEnvironment } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useLeavePlanModeWhenOptedOut } from "./useLeavePlanModeWhenOptedOut";
 import { isImageAttachment, type ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
 import { Button, InlineButton } from "../ui/button";
@@ -100,6 +101,7 @@ export function QueuedRunsControl({
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
+  const leavePlanModeWhenOptedOut = useLeavePlanModeWhenOptedOut(props.environmentId);
   const [showAll, setShowAll] = useState(false);
   const queueListId = useId();
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
@@ -178,10 +180,13 @@ export function QueuedRunsControl({
     steerInFlightRef.current = true;
     setBusyRunId(queuedRunId);
     if (workflow?.canSendNow) {
-      await resume({
-        environmentId: props.environmentId,
-        input: { threadId: props.threadId, runId: queuedRunId },
-      });
+      const threadRef = scopeThreadRef(props.environmentId, props.threadId);
+      if (await leavePlanModeWhenOptedOut(threadRef)) {
+        await resume({
+          environmentId: props.environmentId,
+          input: { threadId: props.threadId, runId: queuedRunId },
+        });
+      }
     } else if (activeRun !== null) {
       await promote({
         environmentId: props.environmentId,

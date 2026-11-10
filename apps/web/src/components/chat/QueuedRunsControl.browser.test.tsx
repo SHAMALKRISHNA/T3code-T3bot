@@ -8,6 +8,8 @@ import { page } from "vite-plus/test/browser";
 const state = vi.hoisted(() => ({
   projection: null as unknown,
   workflow: null as unknown,
+  commands: [] as Array<unknown>,
+  storedMode: "default",
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/thread-workflows"), async (importOriginal) => ({
@@ -23,6 +25,15 @@ vi.mock(import("../../state/entities"), async (importOriginal) => ({
     target === null || target.environmentId === "environment:linked"
       ? null
       : { title: "Release lead" }) as never,
+  readThreadShell: (() => ({ interactionMode: state.storedMode })) as never,
+}));
+
+vi.mock(import("../../state/use-orchestration-command"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useOrchestrationCommand: ((command: unknown) => async () => {
+    state.commands.push(command);
+    return { _tag: "Success" };
+  }) as never,
 }));
 
 vi.mock(import("../../state/environments"), async (importOriginal) => ({
@@ -40,7 +51,10 @@ vi.mock(import("../../state/query"), async (importOriginal) => ({
 
 vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useAtomCommand: (() => async () => undefined) as never,
+  useAtomCommand: ((command: unknown) => async () => {
+    state.commands.push(command);
+    return undefined;
+  }) as never,
 }));
 
 vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
@@ -51,11 +65,14 @@ vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
 
 import "~/index.css";
 import { render as renderUi } from "../../../test/render";
+import { threadEnvironment } from "../../state/threads";
 import { QueuedRunsControl } from "./QueuedRunsControl";
 
 function setup() {
   state.projection = null;
   state.workflow = null;
+  state.commands = [];
+  state.storedMode = "default";
 }
 
 const baseProps = {
@@ -118,6 +135,29 @@ it("previews assistant quotes as readable text and preserves the citation when e
   expect(onEditQueuedRun).toHaveBeenCalledExactlyOnceWith(
     expect.objectContaining({ text: quoteAndText }),
   );
+});
+
+it("leaves a stored plan mode before sending a held queued message with Plan mode off", async () => {
+  setup();
+  state.storedMode = "plan";
+  state.projection = { projection: { messages: [] } };
+  state.workflow = {
+    activeRun: null,
+    canSendNow: true,
+    queuedRuns: [
+      {
+        run: { id: "run:held", userMessageId: "message:held" },
+        text: "Run this next",
+        attachments: [],
+      },
+    ],
+  };
+  await using _screen = await renderQueue();
+
+  await page.getByRole("button", { name: "Send now" }).click();
+
+  await vi.waitFor(() => expect(state.commands).toContain(threadEnvironment.resumeThreadQueue));
+  expect(state.commands.at(0)).toBe(threadEnvironment.setInteractionMode);
 });
 
 it("shows who sent a queued message and folds automation and agent prompts", async () => {

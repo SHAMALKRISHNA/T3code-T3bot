@@ -25,6 +25,7 @@ vi.mock("../lib/runtime", async () => {
   };
 });
 
+import { resolvePlanModeOptIn } from "./legacy-plan-mode";
 import { createMobilePreferencesState } from "./preferences";
 import * as MobilePreferences from "../persistence/mobile-preferences";
 
@@ -172,6 +173,86 @@ describe("mobile preferences state", () => {
     }),
   );
 
+  it.effect("clears the failed read once a later load succeeds", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const state = makePreferencesState({
+        load: Effect.suspend(() => {
+          attempts += 1;
+          return attempts === 1
+            ? Effect.fail(
+                new MobilePreferences.MobilePreferencesLoadError({
+                  cause: new Error("secure storage unavailable"),
+                }),
+              )
+            : Effect.succeed<MobilePreferences.Preferences>({ planModeEnabled: true });
+        }),
+        savePatch: (patch) => Effect.succeed(patch),
+      });
+      const registry = AtomRegistry.make();
+      const unmount = registry.mount(state.preferencesAtom);
+      yield* AtomRegistry.getResult(registry, state.preferencesAtom, { suspendOnWaiting: true });
+      expect(registry.get(state.loadFailedAtom)).toBe(true);
+
+      registry.refresh(state.storedPreferencesAtom);
+      expect(
+        yield* AtomRegistry.getResult(registry, state.preferencesAtom, {
+          suspendOnWaiting: true,
+        }),
+      ).toEqual({ planModeEnabled: true });
+      expect(registry.get(state.loadFailedAtom)).toBe(false);
+
+      unmount();
+      registry.dispose();
+    }),
+  );
+
+  it.effect("never reads as opted out while a failed read is retried for an opted-in device", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const state = makePreferencesState({
+        load: Effect.suspend(() => {
+          attempts += 1;
+          return attempts === 1
+            ? Effect.fail(
+                new MobilePreferences.MobilePreferencesLoadError({
+                  cause: new Error("secure storage unavailable"),
+                }),
+              )
+            : Effect.succeed<MobilePreferences.Preferences>({ planModeEnabled: true });
+        }),
+        savePatch: (patch) => Effect.succeed(patch),
+      });
+      const registry = AtomRegistry.make();
+      const unmount = registry.mount(state.preferencesAtom);
+      const unmountFlag = registry.mount(state.loadFailedAtom);
+      yield* AtomRegistry.getResult(registry, state.preferencesAtom, { suspendOnWaiting: true });
+
+      // The outbox reads both atoms on every change; record what it would see each time.
+      const seen: string[] = [];
+      const record = () =>
+        seen.push(
+          resolvePlanModeOptIn(
+            registry.get(state.preferencesAtom),
+            registry.get(state.loadFailedAtom),
+          ),
+        );
+      const stopPreferences = registry.subscribe(state.preferencesAtom, record);
+      const stopFlag = registry.subscribe(state.loadFailedAtom, record);
+      registry.refresh(state.storedPreferencesAtom);
+      yield* AtomRegistry.getResult(registry, state.preferencesAtom, { suspendOnWaiting: true });
+
+      expect(seen).not.toContain("off");
+      expect(seen.at(-1)).toBe("on");
+
+      stopPreferences();
+      stopFlag();
+      unmountFlag();
+      unmount();
+      registry.dispose();
+    }),
+  );
+
   it.effect("falls back to empty preferences when secure storage cannot be read", () =>
     Effect.gen(function* () {
       const state = makePreferencesState({
@@ -190,6 +271,8 @@ describe("mobile preferences state", () => {
           suspendOnWaiting: true,
         }),
       ).toEqual({});
+      // Empty preferences here mean "unknown", which is not the same as never having opted in.
+      expect(registry.get(state.loadFailedAtom)).toBe(true);
 
       unmount();
       registry.dispose();
