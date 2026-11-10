@@ -1169,12 +1169,13 @@ export function createThreadOutboxDelivery(): {
     return outcome === "removed";
   };
 
+  // Message ids mapped to the thread whose composer shows why they are waiting.
+  const heldForUnknownOptIn = new Map<MessageId, string>();
+
   // A pass writes atoms the pass reads (family mounts, the dispatch slot), and the registry
   // notifies subscribers synchronously, so drain() can be called from inside a pass. That call
   // only asks for another pass; a nested pass would decide from inputs the outer one is still
   // acting on and could start a second delivery.
-  // Message ids mapped to the thread whose composer shows why they are waiting.
-  const heldForUnknownOptIn = new Map<MessageId, string>();
   let draining = false;
   let drainRequested = false;
   function drain(): void {
