@@ -1274,10 +1274,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         runId: turn.input.runId,
         nodeId: base.nodeId,
         kind: "proposed_plan" as const,
-        status: "completed" as const,
+        status: "active" as const,
         markdown,
       };
-      if (state.proposedPlan !== undefined) {
+      if (state.proposedPlan?.status === "active") {
         yield* emit({
           type: "plan.updated",
           driver,

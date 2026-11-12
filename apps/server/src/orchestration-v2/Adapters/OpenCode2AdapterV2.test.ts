@@ -813,9 +813,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.deepEqual(
         plans.map((each) => [each.status, each.kind === "proposed_plan" && each.markdown]),
         [
-          ["completed", "## Plan\n\n1. Add the store\n2. Add the list"],
+          ["active", "## Plan\n\n1. Add the store\n2. Add the list"],
           ["superseded", "## Plan\n\n1. Add the store\n2. Add the list"],
-          ["completed", "## Plan\n\n1. Add the list"],
+          ["active", "## Plan\n\n1. Add the list"],
         ],
       );
       assert.equal(superseded?.id, first?.id);
