@@ -744,6 +744,96 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             event.turnItem.text === "DONE",
         ),
       );
+      assert.isFalse(
+        seen.some((event) => event.type === "plan.updated" && event.plan.kind === "proposed_plan"),
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("turns a Plan mode turn's final answer into its proposed plan", () =>
+    Effect.gen(function* () {
+      const text = (message: string, ordinal: number, value: string) =>
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: message,
+          ordinal,
+          text: value,
+        });
+      const { runtime, thread } = yield* resumed([
+        out("session.switchAgent", { sessionID: SESSION, agent: "plan" }),
+        reply("session.switchAgent", null),
+        out("agent.list", "<any>"),
+        reply("agent.list", agentList),
+        out("session.update", { sessionID: SESSION, permissions: "<any>" }),
+        reply("session.update", null),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        text("msg_plan", 0, "Reading the project first."),
+        text("msg_plan", 1, "## Plan\n\n1. Add the store\n2. Add the list"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        replyData("session.prompt", {
+          id: "msg_refine",
+          sessionID: SESSION,
+          time: { created: 1790656601411 },
+          type: "user",
+          payload: { text: "refine" },
+          delivery: "steer",
+        }),
+        text("msg_refined", 0, "## Plan\n\n1. Add the list"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const firstEnded = yield* Deferred.make<void>();
+      let terminals = 0;
+      const collected = yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          event.type === "turn.terminal" ? Deferred.succeed(firstEnded, undefined) : Effect.void,
+        ),
+        Stream.takeUntil((event) => event.type === "turn.terminal" && ++terminals === 2),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const input = turnInput(thread);
+      const plan = { ...input.runtimePolicy, interactionMode: "plan" as const };
+      yield* runtime.startTurn({ ...input, runtimePolicy: plan });
+      yield* Deferred.await(firstEnded);
+      yield* runtime.startTurn({
+        ...input,
+        runId: RunId.make("run:opencode2-adapter:2"),
+        runOrdinal: 2,
+        providerTurnOrdinal: 2,
+        attemptId: RunAttemptId.make("attempt:opencode2-adapter:2"),
+        runtimePolicy: plan,
+      });
+      const seen = yield* Fiber.join(collected);
+      const plans = seen.flatMap((event) =>
+        event.type === "plan.updated" && event.plan.kind === "proposed_plan" ? [event.plan] : [],
+      );
+      const [first, superseded, refined] = plans;
+      assert.deepEqual(
+        plans.map((each) => [each.status, each.kind === "proposed_plan" && each.markdown]),
+        [
+          ["active", "## Plan\n\n1. Add the store\n2. Add the list"],
+          ["superseded", "## Plan\n\n1. Add the store\n2. Add the list"],
+          ["active", "## Plan\n\n1. Add the list"],
+        ],
+      );
+      assert.equal(superseded?.id, first?.id);
+      assert.notEqual(refined?.id, first?.id);
+      const items = seen.flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem] : [],
+      );
+      const answer = items.find(
+        (item) => item.type === "assistant_message" && item.text.includes("Add the store"),
+      );
+      const card = items.find((item) => item.type === "proposed_plan" && item.planId === first?.id);
+      // The answer becomes the card in place, so the plan is not shown twice.
+      assert.equal(card?.id, answer?.id);
+      assert.isTrue(
+        items.some(
+          (item) => item.type === "assistant_message" && item.text === "Reading the project first.",
+        ),
+      );
     }).pipe(Effect.scoped),
   );
 

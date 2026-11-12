@@ -20,7 +20,8 @@ OpenCode 2 converts the shared OpenCode database to its own format the first tim
 runs. Don't run OpenCode 1.x and 2.x side by side on the same machine. Threads you
 started on 1.x continue on 2.x.
 
-Plan mode uses OpenCode's `plan` agent.
+Plan mode uses OpenCode's `plan` agent. Its final answer becomes the plan card, so you can
+refine it or implement it, in this thread or a new one. OpenCode 1.x has no Plan mode.
 
 ## Compaction
 

@@ -31,6 +31,7 @@ import {
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
+  type OrchestrationV2PlanArtifact,
   type OrchestrationV2PlanStep,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
@@ -171,7 +172,7 @@ const OpenCode2ProviderCapabilities = {
   planning: {
     emitsPlanUpdated: true,
     emitsTodoList: true,
-    emitsProposedPlan: false,
+    emitsProposedPlan: true,
     supportsStructuredQuestions: true,
     planDeltasHaveItemIds: false,
   },
@@ -219,7 +220,10 @@ interface TurnOwner {
   readonly runOrdinal: number;
   readonly rootNodeId: ProviderAdapter.ProviderAdapterV2TurnInput["rootNodeId"];
   readonly modelSelection: ModelSelection;
-  readonly runtimePolicy: Pick<ProviderAdapter.ProviderAdapterV2RuntimePolicy, "cwd">;
+  readonly runtimePolicy: Pick<
+    ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+    "cwd" | "interactionMode"
+  >;
 }
 
 interface ActiveTurn {
@@ -248,6 +252,10 @@ interface ActiveTurn {
   compaction: { readonly nativeId: string; readonly startedAt: DateTime.Utc } | undefined;
   compactions: number;
   todoPlanId: PlanId | undefined;
+  // The plan agent answers in text; in Plan mode the final answer becomes the proposed plan.
+  answer:
+    | { readonly nativeId: string; readonly text: string; readonly startedAt: DateTime.Utc }
+    | undefined;
   retry:
     | {
         readonly retry: OrchestrationV2ProviderRetry;
@@ -361,6 +369,9 @@ interface ThreadState {
   >;
   readonly stoppedChildren: Set<string>;
   readonly strandedSteers: Set<string>;
+  proposedPlan:
+    | Extract<OrchestrationV2PlanArtifact, { readonly kind: "proposed_plan" }>
+    | undefined;
   /** Prompts other clients queued while no T3 turn ran, shown once delivered; `leads` the next wake if no report preceded it. */
   readonly externalPrompts: Map<string, { readonly text: string; leads: boolean }>;
   mcp:
@@ -843,6 +854,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       reports: new Map(),
       stoppedChildren: new Set(),
       strandedSteers: new Set(),
+      proposedPlan: undefined,
       externalPrompts: new Map(),
       mcp: undefined,
       instructions: undefined,
@@ -1081,6 +1093,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (completed) turn.texts.delete(nativeId);
       else turn.texts.set(nativeId, entry);
       if (entry.text.length === 0) return;
+      if (completed && kind === "text") {
+        turn.answer = { nativeId, text: entry.text, startedAt: entry.startedAt };
+      }
       const status = completed ? "completed" : "running";
       const completedAt = completed ? updatedAt : null;
       const nodeKind = kind === "text" ? "assistant_message" : "reasoning";
@@ -1233,6 +1248,49 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           planId: turn.todoPlanId,
           steps,
         },
+      });
+    });
+
+    // Re-emits the answer's own turn item as the plan card, so the plan is not shown twice.
+    const emitProposedPlan = Effect.fnUntraced(function* (state: ThreadState, turn: ActiveTurn) {
+      const answer = turn.answer;
+      // Tools or other items after the last text mean that text was narration, not the plan.
+      if (answer === undefined || turn.ordinals.get(answer.nativeId) !== turn.nextOrdinal - 1) {
+        return;
+      }
+      const markdown = answer.text.trim();
+      if (markdown.length === 0) return;
+      const now = yield* DateTime.now;
+      const base = itemBase(state, turn, answer.nativeId, "completed", answer.startedAt, now, now);
+      const plan = {
+        id: yield* idAllocator.allocate
+          .plan({
+            threadId: turn.input.threadId,
+            ...(turn.input.runId === null ? {} : { runId: turn.input.runId }),
+            driver,
+          })
+          .pipe(Effect.orDie),
+        threadId: turn.input.threadId,
+        runId: turn.input.runId,
+        nodeId: base.nodeId,
+        kind: "proposed_plan" as const,
+        status: "active" as const,
+        markdown,
+      };
+      if (state.proposedPlan?.status === "active") {
+        yield* emit({
+          type: "plan.updated",
+          driver,
+          plan: { ...state.proposedPlan, status: "superseded" },
+        });
+      }
+      state.proposedPlan = plan;
+      yield* emitNode(state, turn, answer.nativeId, "plan", "completed", answer.startedAt, now);
+      yield* emit({ type: "plan.updated", driver, plan });
+      yield* emit({
+        type: "turn_item.updated",
+        driver,
+        turnItem: { ...base, type: "proposed_plan", planId: plan.id, markdown, streaming: false },
       });
     });
 
@@ -1451,6 +1509,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       compaction: undefined,
       compactions: 0,
       todoPlanId: undefined,
+      answer: undefined,
       retry: undefined,
       interrupted: false,
       unsent: false,
@@ -2127,6 +2186,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const completedAt = yield* DateTime.now;
       for (const open of turn.texts.values()) {
         yield* emitText(state, turn, open.block, open.kind, (text) => text, true);
+      }
+      if (
+        terminal.status === "completed" &&
+        state.subagent === undefined &&
+        turn.input.runtimePolicy.interactionMode === "plan"
+      ) {
+        yield* emitProposedPlan(state, turn);
       }
       for (const id of turn.tools.keys()) {
         if ([...state.imageJobs.values()].some((job) => job.turn === turn && job.toolId === id))
