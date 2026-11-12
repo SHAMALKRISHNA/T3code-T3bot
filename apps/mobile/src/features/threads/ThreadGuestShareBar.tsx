@@ -22,6 +22,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useEnvironmentScope } from "../../state/session";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useLeavePlanModeWhenOptedOut } from "./use-leave-plan-mode-when-opted-out";
 import { GUEST_PENDING_BUBBLE_CLASS_NAME, GuestMessageName } from "./guestMessageStyle";
 
 const NO_GUEST_SHARE_ATOM = Atom.make<ThreadGuestShare | null>(null);
@@ -134,12 +135,17 @@ export function ThreadGuestPendingMessage(props: {
     threadEnvironment.resolveGuestMessage,
     "resolve guest message",
   );
+  const leavePlanModeWhenOptedOut = useLeavePlanModeWhenOptedOut();
   // One request at a time: a second tap while the first is in flight would double-send.
   const [busy, setBusy] = useState(false);
 
   const resolve = async (decision: "send" | "dismiss") => {
     if (busy) return;
     setBusy(true);
+    if (decision === "send" && !(await leavePlanModeWhenOptedOut(threadRef))) {
+      setBusy(false);
+      return;
+    }
     const result = await resolveGuestMessage({
       environmentId: threadRef.environmentId,
       input: {

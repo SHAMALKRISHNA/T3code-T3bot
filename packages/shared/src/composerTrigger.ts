@@ -180,3 +180,20 @@ export function parseSideChatCommand(text: string): { prompt: string } | null {
   const match = /^\/(?:side|btw)(?:\s+([\s\S]*))?$/i.exec(text.trim());
   return match ? { prompt: match[1]?.trim() ?? "" } : null;
 }
+
+export function parseInteractionModeCommand(text: string): {
+  interactionMode: "plan" | "default";
+  prompt: string;
+} | null {
+  const match = /^\/(plan|default)(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  if (!match) return null;
+  return {
+    interactionMode: match[1]!.toLowerCase() as "plan" | "default",
+    prompt: match[2]?.trim() ?? "",
+  };
+}
+
+/** Whether a slash command of this name would be consumed as T3's `/plan` or `/default`. */
+export function isInteractionModeCommandName(name: string): boolean {
+  return parseInteractionModeCommand(`/${name}`)?.prompt === "";
+}

@@ -40,6 +40,7 @@ import { buildExpandedImagePreview, type ExpandedImagePreview } from "./Expanded
 import { GuestMessageAttachments } from "./GuestMessageAttachments";
 import { GuestMessageName, guestBubbleClassName } from "./guestMessageStyle";
 import { guestShareDialogThreadAtom } from "./guestShareDialogState";
+import { useLeavePlanModeWhenOptedOut } from "./useLeavePlanModeWhenOptedOut";
 
 function useThreadGuestShare(threadRef: ScopedThreadRef | null): ThreadGuestShare | null {
   return useQuietThreadProjection(threadRef)?.projection.thread.guestShare ?? null;
@@ -231,6 +232,7 @@ export function GuestPendingMessages({
   const resolveGuestMessage = useOrchestrationCommand(threadEnvironment.resolveGuestMessage, {
     label: "resolve guest message",
   });
+  const leavePlanModeWhenOptedOut = useLeavePlanModeWhenOptedOut(threadRef.environmentId);
   const [busyIds, setBusyIds] = useState<ReadonlySet<GuestMessageId>>(new Set());
   const pending = share?.messages.filter((message) => message.status === "pending") ?? [];
   // The files are the thread's attachments, which the owner's environment serves like any other.
@@ -257,10 +259,12 @@ export function GuestPendingMessages({
 
   const resolve = async (guestMessageId: GuestMessageId, decision: "send" | "dismiss") => {
     setBusyIds((ids) => new Set(ids).add(guestMessageId));
-    await resolveGuestMessage({
-      environmentId: threadRef.environmentId,
-      input: { threadId: threadRef.threadId, guestMessageId, decision },
-    });
+    if (decision === "dismiss" || (await leavePlanModeWhenOptedOut(threadRef))) {
+      await resolveGuestMessage({
+        environmentId: threadRef.environmentId,
+        input: { threadId: threadRef.threadId, guestMessageId, decision },
+      });
+    }
     setBusyIds((ids) => {
       const next = new Set(ids);
       next.delete(guestMessageId);

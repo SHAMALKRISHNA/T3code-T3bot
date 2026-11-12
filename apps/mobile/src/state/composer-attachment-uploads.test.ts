@@ -112,6 +112,14 @@ vi.mock("./server", async () => {
   const { Atom } = await import("effect/reactivity");
   return { serverEnvironment: { configValueAtom: Atom.family(() => Atom.make(null)) } };
 });
+vi.mock("./preferences", async () => {
+  const { Atom, AsyncResult } = await import("effect/reactivity");
+  return {
+    mobilePreferencesAtom: Atom.make(AsyncResult.success({})),
+    mobilePreferencesLoadFailedAtom: Atom.make(false),
+    mobilePreferencesStoredAtom: Atom.make(0),
+  };
+});
 vi.mock("./git", () => ({ gitEnvironment: {} }));
 vi.mock("./threads", () => ({ threadEnvironment: {} }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: () => async () => undefined }));

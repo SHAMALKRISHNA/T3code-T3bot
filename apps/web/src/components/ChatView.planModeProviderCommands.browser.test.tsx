@@ -1,0 +1,139 @@
+import { createMemoryHistory } from "@tanstack/react-router";
+import {
+  scopeProjectRef,
+  scopeThreadRef,
+  scopedThreadKey,
+} from "@t3tools/client-runtime/environment";
+import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import type * as Context from "effect/Context";
+import { expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
+
+import { AppRoot } from "~/AppRoot";
+// The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
+// takes 6-11s; importing it here keeps that out of the test's timeout.
+import "~/components/ChatView";
+import { draftFanoutSelectionsAtom } from "~/components/chat/chatViewSend";
+import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import { getRouter } from "~/router";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import {
+  ENVIRONMENT_ID,
+  PROJECT_ID,
+  installFakeEnvironment,
+  threadWithHistory,
+  type FakeDriver,
+} from "../../test/fakeEnvironment";
+import { render } from "../../test/render";
+
+// The socket is the only fake layer; see test/appScenarios.renders.tsx.
+vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
+  const [actual, { fakeDriver }, Layer] = await Promise.all([
+    importOriginal<{ readonly ConnectionDriver: Context.Key<unknown, FakeDriver> }>(),
+    import("../../test/fakeEnvironment"),
+    import("effect/Layer"),
+  ]);
+  return { ...actual, layer: Layer.succeed(actual.ConnectionDriver, fakeDriver) };
+});
+
+vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
+  ...(await original()),
+  trackRpcRequestSent: () => {},
+}));
+
+// Its own file: the provider's commands come from the config the connection keeps.
+const planOn = threadWithHistory("thread-provider-plan-on", 1);
+const planOff = threadWithHistory("thread-provider-plan-off", 1);
+installFakeEnvironment([planOn, planOff], {
+  acceptCommands: true,
+  providerSlashCommands: [
+    { name: "plan", description: "Native plan" },
+    { name: "DEFAULT", description: "Native default" },
+    { name: "review", description: "Native review" },
+  ],
+});
+await page.viewport(1400, 900);
+
+function useSettings(planModeEnabled: boolean) {
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+    planModeEnabled,
+  });
+}
+
+async function openThread(threadId: string) {
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${threadId}`] }),
+  );
+  await router.load();
+  const app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText(`Answer 0 for ${threadId}.`)).toBeVisible();
+  await userEvent.click(page.getByTestId("composer-editor"));
+  return app;
+}
+
+const menuItemIds = () =>
+  [...document.querySelectorAll("[data-composer-item-id]")].map((item) =>
+    item.getAttribute("data-composer-item-id"),
+  );
+
+it("offers one /plan and /default, T3's, while its mode commands would consume the text", async () => {
+  useSettings(true);
+  await using _app = await openThread(planOn.id);
+  await userEvent.keyboard("/");
+  await vi.waitFor(() => expect(menuItemIds()).toContain("slash:plan"));
+  expect(menuItemIds()).toContain("slash:default");
+  expect(menuItemIds()).toContain("provider-slash-command:codex:review");
+  expect(menuItemIds()).not.toContain("provider-slash-command:codex:plan");
+  expect(menuItemIds()).not.toContain("provider-slash-command:codex:DEFAULT");
+});
+
+// Here because this file's server predates worktree bootstrap, which the other file's does not.
+it("a typed /plan switches modes on a server too old to start multiple models", async () => {
+  useSettings(true);
+  const draftId = DraftId.make("draft-fanout-old-server");
+  const threadId = ThreadId.make("thread-draft-fanout-old-server");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+      threadId,
+      branch: "main",
+    });
+  const instanceId = ProviderInstanceId.make("codex");
+  appAtomRegistry.set(
+    draftFanoutSelectionsAtom(scopedThreadKey(scopeThreadRef(ENVIRONMENT_ID, threadId))),
+    [
+      { instanceId, model: "gpt-5.4" },
+      { instanceId, model: "gpt-5.5" },
+    ],
+  );
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, { router: false });
+  await userEvent.click(page.getByTestId("composer-editor"));
+  // The space closes the slash menu, so Enter reaches the send path.
+  await userEvent.keyboard("/plan ");
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() =>
+    expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.interactionMode).toBe(
+      "plan",
+    ),
+  );
+  expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt ?? "").toBe("");
+});
+
+it("leaves the provider's own /plan and /default available with Plan mode off", async () => {
+  useSettings(false);
+  await using _app = await openThread(planOff.id);
+  await userEvent.keyboard("/");
+  await vi.waitFor(() => expect(menuItemIds()).toContain("provider-slash-command:codex:plan"));
+  expect(menuItemIds()).toContain("provider-slash-command:codex:DEFAULT");
+  expect(menuItemIds()).not.toContain("slash:plan");
+  expect(menuItemIds()).not.toContain("slash:default");
+});

@@ -2,7 +2,8 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useRememberThreadProject } from "./useRememberThreadProject";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
-import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
+import { useLegacyPlanModeState } from "./use-legacy-plan-mode-enabled";
+import { buildWorkLocallyStartTurnInput } from "./work-locally-start-turn";
 import { useWorktreeSetup } from "./use-worktree-setup";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { AppBar } from "../../components/ui/AppBar";
@@ -678,6 +679,14 @@ function ThreadRouteContent(
 
   const handleResumeQueue = async () => {
     if (!selectedThread) return;
+    // Resuming saves the composer's mode, and with the opt-in unreadable that could be the wrong one.
+    if (composer.planModeOptIn === "unknown" && selectedThread.interactionMode === "plan") {
+      Dialog.alert(
+        "Plan Mode setting unavailable",
+        "This thread is in plan mode and the Plan Mode setting could not be read. Turn Plan Mode on or off in Settings, then try again.",
+      );
+      return;
+    }
     const result = await resumeThread({
       thread: selectedThread,
       resumableRunId: composer.resumableRunId,
@@ -880,6 +889,7 @@ function ThreadRouteContent(
     });
   };
   const startLocalThread = useAtomCommand(threadEnvironment.startTurn, "work locally");
+  const { enabled: legacyPlanModeEnabled } = useLegacyPlanModeState();
   const localResendBusy = useRef(false);
   const setupMessage = selectedThreadDetail?.messages.find((message) => message.role === "user");
   const handleWorkLocally = async () => {
@@ -894,26 +904,16 @@ function ThreadRouteContent(
       localResendBusy.current = false;
       return;
     }
-    // V2 accepts launch before setup; cancellation cannot reject that delivery, so reuse server-owned prompt and uploads.
     const metadata = makeTurnCommandMetadata();
     const launched = await startLocalThread({
       environmentId: selectedThread.environmentId,
-      input: buildProjectThreadStartTurnInput({
-        ...metadata,
-        projectId: selectedThread.projectId,
+      input: buildWorkLocallyStartTurnInput({
+        metadata,
+        thread: selectedThread,
         projectCwd: selectedThreadProject.workspaceRoot,
-        text: setupMessage.text,
-        titleText: selectedThread.title,
-        ...(setupMessage.context ? { context: setupMessage.context } : {}),
-        uploadedAttachments: setupMessage.attachments,
-        modelSelection: selectedThread.modelSelection,
-        runtimeMode: selectedThread.runtimeMode,
-        interactionMode: selectedThread.interactionMode,
-        workspaceMode: "local",
-        branch: null,
-        worktreePath: null,
-        startFromOrigin: false,
-        worktreeBranchName: "",
+        message: setupMessage,
+        planModeEnabled: legacyPlanModeEnabled,
+        providers: routeEnvironmentRuntime?.serverConfig?.providers ?? [],
       }),
     });
     localResendBusy.current = false;
@@ -1078,6 +1078,7 @@ function ThreadRouteContent(
           offersSideChat={composer.sideChatUnavailableReason === null}
           onReconnectEnvironment={handleReconnectEnvironment}
           canSwitchThreadProvider={composer.canSwitchThreadProvider}
+          onUpdateThreadInteractionMode={composer.onUpdateInteractionMode}
           onRespondToApproval={requests.onRespondToApproval}
           onSelectUserInputOption={requests.onSelectUserInputOption}
           onChangeUserInputCustomAnswer={requests.onChangeUserInputCustomAnswer}

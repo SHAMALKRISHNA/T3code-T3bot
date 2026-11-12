@@ -2,7 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   detectComposerTrigger,
+  isInteractionModeCommandName,
   parseSideChatCommand,
+  parseInteractionModeCommand,
   serializeComposerFileLink,
 } from "./composerTrigger.ts";
 
@@ -109,5 +111,33 @@ describe("parseSideChatCommand", () => {
     expect(parseSideChatCommand("/sidebar")).toBeNull();
     expect(parseSideChatCommand("/btwx")).toBeNull();
     expect(parseSideChatCommand("ask /side later")).toBeNull();
+  });
+});
+
+describe("parseInteractionModeCommand", () => {
+  it.each([
+    ["/plan", "plan", ""],
+    [" /PLAN. ", null, null],
+    ["/PLAN\ninspect this", "plan", "inspect this"],
+    ["/default implement it", "default", "implement it"],
+    ["/planner", null, null],
+    ["quote /plan", null, null],
+    ["/tmp/plan", null, null],
+  ])("parses only a leading mode command in %j", (text, mode, prompt) => {
+    expect(parseInteractionModeCommand(text!)).toEqual(
+      mode ? { interactionMode: mode, prompt } : null,
+    );
+  });
+});
+
+describe("isInteractionModeCommandName", () => {
+  it.each([
+    ["plan", true],
+    ["DEFAULT", true],
+    ["planner", false],
+    ["plan with arguments", false],
+    ["review", false],
+  ])("matches what the send path would consume for %j", (name, expected) => {
+    expect(isInteractionModeCommandName(name!)).toBe(expected);
   });
 });

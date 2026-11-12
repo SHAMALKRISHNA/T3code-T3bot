@@ -13,7 +13,6 @@ import {
 import { useState } from "react";
 import { newMessageId } from "~/lib/utils";
 import type { ComposerHandleRef } from "../../composerHandleContext";
-import { DEFAULT_INTERACTION_MODE } from "../../types";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import type { makeThreadErrorSetter } from "../ChatView.logic";
@@ -33,6 +32,7 @@ interface ComposerResumeInput {
   readonly threadDetailLoading: boolean;
   readonly activeEnvironmentUnavailable: boolean;
   readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
   readonly localCheckoutBranchMismatch: { readonly currentBranch: string } | null;
   readonly composerRef: ComposerHandleRef;
   readonly persistThreadSettingsForNextTurn: (input: {
@@ -64,6 +64,7 @@ export function useComposerResume(input: ComposerResumeInput) {
     threadDetailLoading,
     activeEnvironmentUnavailable,
     runtimeMode,
+    interactionMode,
     localCheckoutBranchMismatch,
     composerRef,
     persistThreadSettingsForNextTurn,
@@ -103,6 +104,15 @@ export function useComposerResume(input: ComposerResumeInput) {
     // Commands settle into a result, so this always runs.
     const resume = async () => {
       if (resumableRunId === null) {
+        // Queued runs start in the thread's saved mode, so a plan mode left there would apply to
+        // them. Their approvals stay as they are: only the mode follows the composer here.
+        const modeResult = await persistThreadSettingsForNextTurn({
+          threadId,
+          createdAt: new Date().toISOString(),
+          runtimeMode: activeThread.runtimeMode,
+          interactionMode,
+        });
+        if (modeResult._tag === "Failure") return modeResult;
         return resumeThreadQueue({ environmentId, input: { threadId } });
       }
       // Read before the first await: the composer follows the route, so after the user switches
@@ -116,7 +126,7 @@ export function useComposerResume(input: ComposerResumeInput) {
           ? { branch: localCheckoutBranchMismatch.currentBranch }
           : {}),
         runtimeMode,
-        interactionMode: DEFAULT_INTERACTION_MODE,
+        interactionMode,
       });
       if (settingsResult._tag === "Failure") return settingsResult;
       const turnResult = await startThreadTurn({
@@ -132,7 +142,7 @@ export function useComposerResume(input: ComposerResumeInput) {
             attachments: [],
           },
           runtimeMode,
-          interactionMode: DEFAULT_INTERACTION_MODE,
+          interactionMode,
           dispatchMode: "start",
         },
       });

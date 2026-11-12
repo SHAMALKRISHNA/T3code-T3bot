@@ -19,6 +19,7 @@ import {
   filterComposerPullRequestMatches,
   withLinkedComposerPullRequestsFirst,
 } from "@t3tools/shared/composerPullRequestMatches";
+import { isInteractionModeCommandName } from "@t3tools/shared/composerTrigger";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 
 import type { ComposerTrigger } from "../../composer-logic";
@@ -67,6 +68,7 @@ export function useComposerMenuItems({
   pullRequestProjectId,
   pullRequestRepository,
   threadPullRequests,
+  interactionModeCommandsOffered,
   sideChatAvailable,
   sideChatDisabledReason,
   freshSessionAvailable,
@@ -87,6 +89,7 @@ export function useComposerMenuItems({
   readonly pullRequestProjectId: ProjectId | null;
   readonly pullRequestRepository: string | null;
   readonly threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
+  readonly interactionModeCommandsOffered: boolean;
   readonly sideChatAvailable: boolean;
   readonly sideChatDisabledReason: string | null;
   readonly freshSessionAvailable: boolean;
@@ -238,6 +241,24 @@ export function useComposerMenuItems({
           label: "/model",
           description: "Switch response model for this thread",
         },
+        ...(interactionModeCommandsOffered
+          ? ([
+              {
+                id: "slash:plan",
+                type: "slash-command",
+                command: "plan",
+                label: "/plan",
+                description: "Switch this thread into plan mode",
+              },
+              {
+                id: "slash:default",
+                type: "slash-command",
+                command: "default",
+                label: "/default",
+                description: "Switch this thread back to normal build mode",
+              },
+            ] as const)
+          : []),
         ...(sideChatAvailable
           ? ([
               {
@@ -296,10 +317,12 @@ export function useComposerMenuItems({
           (skill.scope ? `${skill.scope} skill` : ""),
       }));
       // T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live.
+      // T3's mode commands replace the provider's too: the send path would consume that text.
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
         (item) =>
           (item.command.name !== "compact" || compactSlashCommandAvailable) &&
-          (item.command.name !== "clear" || !freshSessionAvailable),
+          (item.command.name !== "clear" || !freshSessionAvailable) &&
+          !(interactionModeCommandsOffered && isInteractionModeCommandName(item.command.name)),
       );
       const slashCommandItems = slashCommandItemsForPromptPosition(
         [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],

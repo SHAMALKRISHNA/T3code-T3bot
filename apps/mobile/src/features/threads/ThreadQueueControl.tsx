@@ -34,6 +34,7 @@ import { assetImageSource } from "../../lib/assetImageSource";
 import { beginQueuedRunEdit, useQueuedRunEdit } from "../../state/queued-run-edit";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useLeavePlanModeWhenOptedOut } from "./use-leave-plan-mode-when-opted-out";
 import {
   REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
   buildCancelQueuedRunCommand,
@@ -132,6 +133,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "remove queued message");
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
+  const leavePlanModeWhenOptedOut = useLeavePlanModeWhenOptedOut();
   const [resuming, setResuming] = useState(false);
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
   const busyRef = useRef(false);
@@ -183,7 +185,9 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     if (action === "remove") {
       await cancel(buildCancelQueuedRunCommand({ ...target, runId }));
     } else if (workflow?.canSendNow) {
-      await resume({ ...target, input: { threadId: target.threadId, runId } });
+      if (await leavePlanModeWhenOptedOut(target)) {
+        await resume({ ...target, input: { threadId: target.threadId, runId } });
+      }
     } else if (workflow?.activeRun && workflow.canPromoteToSteer) {
       await promote({
         ...target,
@@ -217,7 +221,9 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
               if (busyRef.current) return;
               busyRef.current = true;
               setResuming(true);
-              await resume({ ...target, input: { threadId: target.threadId } });
+              if (await leavePlanModeWhenOptedOut(target)) {
+                await resume({ ...target, input: { threadId: target.threadId } });
+              }
               busyRef.current = false;
               setResuming(false);
             }}

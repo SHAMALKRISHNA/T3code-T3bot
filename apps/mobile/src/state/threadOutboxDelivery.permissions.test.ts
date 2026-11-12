@@ -103,6 +103,14 @@ vi.mock("./threads", async () => {
     environmentThreadDetails: { stateAtom: () => Atom.make(null) },
   };
 });
+vi.mock("./preferences", async () => {
+  const { Atom, AsyncResult } = await import("effect/reactivity");
+  return {
+    mobilePreferencesAtom: Atom.make(AsyncResult.success({})).pipe(Atom.keepAlive),
+    mobilePreferencesLoadFailedAtom: Atom.make(false).pipe(Atom.keepAlive),
+    mobilePreferencesStoredAtom: Atom.make(0).pipe(Atom.keepAlive),
+  };
+});
 vi.mock("./git", () => ({ gitEnvironment: { preparePullRequestThread: state.checkout } }));
 vi.mock("../lib/modelOptions", () => ({ isModelSelectionUnavailable: state.modelUnavailable }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "abcd" }));
@@ -160,7 +168,13 @@ vi.mock("./use-composer-drafts", async () => {
 });
 
 import { appAtomRegistry } from "./atom-registry";
+import {
+  mobilePreferencesAtom,
+  mobilePreferencesLoadFailedAtom,
+  mobilePreferencesStoredAtom,
+} from "./preferences";
 import { environmentSession } from "./session";
+import { threadComposerErrorsAtom } from "./thread-composer-error";
 import { dispatchingQueuedMessageIdAtom, editingQueuedMessageIdsAtom } from "./use-thread-outbox";
 import { createThreadOutboxDelivery } from "./threadOutboxDelivery";
 
@@ -206,7 +220,18 @@ function startDelivery(): void {
   });
 }
 
+function setPreferences(result: AsyncResult.AsyncResult<{ planModeEnabled?: boolean }, never>) {
+  appAtomRegistry.set(mobilePreferencesAtom as unknown as Atom.Writable<typeof result>, result);
+}
+
+function setLoadFailed(failed: boolean) {
+  appAtomRegistry.set(mobilePreferencesLoadFailedAtom as unknown as Atom.Writable<boolean>, failed);
+}
+
 beforeEach(() => {
+  setPreferences(AsyncResult.success({}));
+  setLoadFailed(false);
+  appAtomRegistry.set(threadComposerErrorsAtom, {});
   setOperateGrant("primary", true);
   setOperateGrant("secondary", false);
   state.draftText = "Keep this draft separate";
@@ -233,6 +258,162 @@ beforeEach(() => {
     draftAttachments: attachments,
     pendingAttachmentIds: [],
   }));
+});
+
+describe("queued messages and the Plan mode opt-in", () => {
+  const storedInPlan = () =>
+    appAtomRegistry.set(state.threadShells, [{ ...state.thread, interactionMode: "plan" }]);
+  const startedMode = () => state.start.mock.calls[0]?.[0].input.interactionMode;
+  const savedModes = () =>
+    state.interaction.mock.calls.map((call) => call[0].input.interactionMode);
+
+  beforeEach(() => {
+    setOperateGrant("secondary", true);
+  });
+
+  it("sends a message saved with no mode in default from a plan thread while Plan mode is off", async () => {
+    storedInPlan();
+    await state.manager.enqueue(message());
+    await runDrain();
+    expect(savedModes()).toEqual(["default"]);
+    expect(startedMode()).toBe("default");
+  });
+
+  it("sends a message carrying plan in default while Plan mode is off", async () => {
+    await state.manager.enqueue(message({ interactionMode: "plan" }));
+    await runDrain();
+    expect(savedModes()).toEqual([]);
+    expect(startedMode()).toBe("default");
+  });
+
+  const isDispatching = () => appAtomRegistry.get(dispatchingQueuedMessageIdAtom) !== null;
+  const composerError = () => appAtomRegistry.get(threadComposerErrorsAtom)["secondary:thread"];
+
+  it("holds every queued message until the preference has loaded, then sends it in its mode", async () => {
+    storedInPlan();
+    setPreferences(AsyncResult.initial());
+    await state.manager.enqueue(message({ interactionMode: "plan" }));
+    // A drain pass claims the slot synchronously when it sends.
+    startDelivery();
+    expect(isDispatching()).toBe(false);
+    expect(remaining()).toHaveLength(1);
+
+    setPreferences(AsyncResult.success({ planModeEnabled: true }));
+    await vi.waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+    expect(savedModes()).toEqual([]);
+    expect(startedMode()).toBe("plan");
+  });
+
+  it("holds a message with no mode of its own while the preference loads", async () => {
+    setPreferences(AsyncResult.initial());
+    await state.manager.enqueue(message());
+    startDelivery();
+    expect(isDispatching()).toBe(false);
+    expect(remaining()).toHaveLength(1);
+  });
+
+  describe("when the preference could not be read", () => {
+    beforeEach(() => setLoadFailed(true));
+
+    it("holds a plan message where the user can see why, and tries the read again", async () => {
+      const refresh = vi.spyOn(appAtomRegistry, "refresh");
+      await state.manager.enqueue(message({ interactionMode: "plan" }));
+      startDelivery();
+      expect(isDispatching()).toBe(false);
+      expect(remaining()).toHaveLength(1);
+      expect(composerError()?.message).toContain("Plan Mode");
+      expect(refresh).toHaveBeenCalledWith(mobilePreferencesStoredAtom);
+      refresh.mockRestore();
+    });
+
+    it("holds a message that would inherit a stored plan mode", async () => {
+      storedInPlan();
+      await state.manager.enqueue(message());
+      startDelivery();
+      expect(isDispatching()).toBe(false);
+      expect(remaining()).toHaveLength(1);
+    });
+
+    it("still sends a message whose mode does not depend on the preference", async () => {
+      storedInPlan();
+      await state.manager.enqueue(message({ interactionMode: "default" }));
+      await runDrain();
+      expect(startedMode()).toBe("default");
+      expect(savedModes()).toEqual(["default"]);
+      expect(remaining()).toEqual([]);
+    });
+
+    it("sends the held message in plan once a later read says this device opted in", async () => {
+      await state.manager.enqueue(message({ interactionMode: "plan" }));
+      startDelivery();
+      expect(state.start).not.toHaveBeenCalled();
+
+      // The real atoms change in one update (preferences.test.ts); the value never trails the flag.
+      setPreferences(AsyncResult.success({ planModeEnabled: true }));
+      setLoadFailed(false);
+      await vi.waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+      expect(startedMode()).toBe("plan");
+      expect(composerError()).toBeUndefined();
+    });
+
+    it("sends the held message in default once the user turns Plan Mode off themselves", async () => {
+      await state.manager.enqueue(message({ interactionMode: "plan" }));
+      startDelivery();
+      expect(state.start).not.toHaveBeenCalled();
+
+      setPreferences(AsyncResult.success({ planModeEnabled: false }));
+      await vi.waitFor(() => expect(state.start).toHaveBeenCalledOnce());
+      expect(startedMode()).toBe("default");
+    });
+
+    it("keeps a plan message queued across a read that fails outright", async () => {
+      setPreferences(AsyncResult.failure(Cause.die("no storage")) as never);
+      await state.manager.enqueue(message({ interactionMode: "plan" }));
+      startDelivery();
+      expect(isDispatching()).toBe(false);
+      expect(remaining()).toHaveLength(1);
+      expect(composerError()?.message).toContain("Plan Mode");
+    });
+  });
+
+  it("starts a new thread carrying plan in default while Plan mode is off", async () => {
+    await state.manager.enqueue(
+      message({
+        threadId: ThreadId.make("new-thread"),
+        interactionMode: "plan",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        creation: {
+          projectId: ProjectId.make("project"),
+          projectCwd: "/repo",
+          workspaceMode: "local",
+          branch: null,
+          worktreePath: null,
+        },
+      }),
+    );
+    await runDrain();
+    expect(startedMode()).toBe("default");
+    expect(state.start.mock.calls[0]?.[0].input.bootstrap.createThread.interactionMode).toBe(
+      "default",
+    );
+  });
+
+  it("keeps a message saved with no mode on the thread's plan mode once opted in", async () => {
+    storedInPlan();
+    setPreferences(AsyncResult.success({ planModeEnabled: true }));
+    await state.manager.enqueue(message());
+    await runDrain();
+    expect(savedModes()).toEqual([]);
+    expect(startedMode()).toBe("plan");
+  });
+
+  it("keeps a message carrying plan in plan once opted in", async () => {
+    setPreferences(AsyncResult.success({ planModeEnabled: true }));
+    await state.manager.enqueue(message({ interactionMode: "plan" }));
+    await runDrain();
+    expect(savedModes()).toEqual(["plan"]);
+    expect(startedMode()).toBe("plan");
+  });
 });
 
 describe("queued PR checkout", () => {
