@@ -22,7 +22,6 @@ import {
   type ModelSelection,
   type OrchestrationProjectShell,
   type OrchestrationV2Command,
-  OrchestrationV2DispatchCommandError,
   OrchestrationV2ThreadLaunchError,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
