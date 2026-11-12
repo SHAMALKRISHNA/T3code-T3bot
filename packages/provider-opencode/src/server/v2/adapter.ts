@@ -220,7 +220,10 @@ interface TurnOwner {
   readonly runOrdinal: number;
   readonly rootNodeId: ProviderAdapter.ProviderAdapterV2TurnInput["rootNodeId"];
   readonly modelSelection: ModelSelection;
-  readonly runtimePolicy: Pick<ProviderAdapter.ProviderAdapterV2RuntimePolicy, "cwd" | "interactionMode">;
+  readonly runtimePolicy: Pick<
+    ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+    "cwd" | "interactionMode"
+  >;
 }
 
 interface ActiveTurn {
@@ -250,7 +253,9 @@ interface ActiveTurn {
   compactions: number;
   todoPlanId: PlanId | undefined;
   // The plan agent answers in text; in Plan mode the final answer becomes the proposed plan.
-  answer: { readonly nativeId: string; readonly text: string; readonly startedAt: DateTime.Utc } | undefined;
+  answer:
+    | { readonly nativeId: string; readonly text: string; readonly startedAt: DateTime.Utc }
+    | undefined;
   retry:
     | {
         readonly retry: OrchestrationV2ProviderRetry;
@@ -364,7 +369,9 @@ interface ThreadState {
   >;
   readonly stoppedChildren: Set<string>;
   readonly strandedSteers: Set<string>;
-  proposedPlan: Extract<OrchestrationV2PlanArtifact, { readonly kind: "proposed_plan" }> | undefined;
+  proposedPlan:
+    | Extract<OrchestrationV2PlanArtifact, { readonly kind: "proposed_plan" }>
+    | undefined;
   /** Prompts other clients queued while no T3 turn ran, shown once delivered; `leads` the next wake if no report preceded it. */
   readonly externalPrompts: Map<string, { readonly text: string; leads: boolean }>;
   mcp:
@@ -1256,11 +1263,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const now = yield* DateTime.now;
       const base = itemBase(state, turn, answer.nativeId, "completed", answer.startedAt, now, now);
       const plan = {
-        id: yield* idAllocator.allocate.plan({
-          threadId: turn.input.threadId,
-          ...(turn.input.runId === null ? {} : { runId: turn.input.runId }),
-          driver,
-        }),
+        id: yield* idAllocator.allocate
+          .plan({
+            threadId: turn.input.threadId,
+            ...(turn.input.runId === null ? {} : { runId: turn.input.runId }),
+            driver,
+          })
+          .pipe(Effect.orDie),
         threadId: turn.input.threadId,
         runId: turn.input.runId,
         nodeId: base.nodeId,
